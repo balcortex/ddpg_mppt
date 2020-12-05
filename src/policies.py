@@ -8,6 +8,7 @@ import torch.nn as nn
 from abc import ABC, abstractmethod
 
 from src.pv_env import PVEnv
+from src.schedule import Schedule
 
 
 class BasePolicy(ABC):
@@ -17,12 +18,12 @@ class BasePolicy(ABC):
         self,
         env: gym.Env,
         noise: Optional[Noise],
-        epsilon: float,
+        schedule: Schedule,
         decrease_noise: bool,
     ):
         self.env = env
         self.noise = noise
-        self.epsilon = epsilon
+        self.schedule = schedule
         self.decrease_noise = decrease_noise
 
         self.low = self.env.action_space.low[0]
@@ -35,6 +36,10 @@ class BasePolicy(ABC):
         info: Optional[Dict[Any, Any]],
     ) -> Union[float, np.ndarray]:
         pass
+
+    def reset(self) -> None:
+        "Reset the schedule to output its initial epsilon value"
+        self.schedule.reset()
 
     def _unscale_actions(
         self,
@@ -51,10 +56,16 @@ class BasePolicy(ABC):
         if not self.noise:
             return actions
 
-        if self.epsilon > np.random.rand():
+        if self.schedule:
+            epsilon = self.schedule()
+            self.schedule.step()
+        else:
+            epsilon = 0.0
+
+        if epsilon > np.random.rand():
             noise = self.noise.sample()
             if self.decrease_noise:
-                noise *= self.epsilon
+                noise *= epsilon
             actions += noise
 
         return actions
@@ -113,10 +124,8 @@ class DDPGPolicy(BasePolicy):
         env: gym environment used to scale the actions
         net: actor network, convert observations into actions
         noise: sample noise from this object to perform exploration
-        epsilon: add noise to action based on epsilon value. Assign a value of
-            zero to it for deterministic actions
-        decrease_noise: whether to multiply the noise by epsilon (epsilon decreases
-            over time)
+        schedule: class that keep track of epsilon
+        decrease_noise: whether to multiply the noise by epsilon
         device: device where the calculations are performed ['cpu', 'cuda']
     """
 
@@ -125,14 +134,14 @@ class DDPGPolicy(BasePolicy):
         env: gym.Env,
         net: nn.Module,
         noise: Optional[Noise],
-        epsilon: float,
+        schedule: Schedule,
         decrease_noise: bool = False,
         device: Union[str, torch.device] = "cpu",
     ):
         super().__init__(
             env=env,
             noise=noise,
-            epsilon=epsilon,
+            schedule=schedule,
             decrease_noise=decrease_noise,
         )
         self.net = net
@@ -177,10 +186,8 @@ class PerturbObservePolicy(BasePolicy):
             localized in the info parameter
         dp_index: index of the dp state (p - p_old)
         noise: sample noise from this object to perform exploration
-        epsilon: add noise to action based on epsilon value. Assign a value of
-            zero to it for deterministic actions
-        decrease_noise: whether to multiply the noise by epsilon (epsilon decreases
-            over time)
+        schedule: class that keep track of epsilon
+        decrease_noise: whether to multiply the noise by epsilon
     """
 
     def __init__(
@@ -190,13 +197,13 @@ class PerturbObservePolicy(BasePolicy):
         dv_index: Union[int, str],
         dp_index: Union[int, str],
         noise: Optional[Noise] = None,
-        epsilon: float = 0.0,
+        schedule: Optional[Schedule] = None,
         decrease_noise: bool = False,
     ):
         super().__init__(
             env=env,
             noise=noise,
-            epsilon=epsilon,
+            schedule=schedule,
             decrease_noise=decrease_noise,
         )
         self.v_step = v_step
@@ -211,7 +218,6 @@ class PerturbObservePolicy(BasePolicy):
         if isinstance(self.dv_index, int):
             self.dv_in_obs = True
 
-    @torch.no_grad()
     def __call__(
         self,
         obs: np.ndarray,
@@ -262,10 +268,8 @@ class MPPPolicy(BasePolicy):
         t_index: index of the temperature state
         v_index: index of the voltage state
         noise: sample noise from this object to perform exploration
-        epsilon: add noise to action based on epsilon value. Assign a value of
-            zero to it for deterministic actions
-        decrease_noise: whether to multiply the noise by epsilon (epsilon decreases
-            over time)
+        schedule: class that keep track of epsilon
+        decrease_noise: whether to multiply the noise by epsilon
     """
 
     def __init__(
@@ -275,13 +279,13 @@ class MPPPolicy(BasePolicy):
         t_index: Union[int, str],
         v_index: Union[int, str],
         noise: Optional[Noise] = None,
-        epsilon: float = 0.0,
+        schedule: Optional[Schedule] = None,
         decrease_noise: bool = False,
     ):
         super().__init__(
             env=env,
             noise=noise,
-            epsilon=epsilon,
+            schedule=schedule,
             decrease_noise=decrease_noise,
         )
         self.g_index = g_index

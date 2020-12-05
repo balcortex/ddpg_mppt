@@ -8,6 +8,7 @@ from src.noise import GaussianNoise
 from src.policies import DDPGPolicy, MPPPolicy, PerturbObservePolicy, RandomPolicy
 from src.pv_env import PVEnv
 from src.reward import RewardPowerDeltaPower
+from src.schedule import LinearSchedule, ConstantSchedule
 
 
 def test_random_policy_box():
@@ -106,7 +107,7 @@ def test_po_info_noise():
         dp_index="dp",
         dv_index="dv",
         noise=noise,
-        epsilon=1.0,
+        schedule=ConstantSchedule(1.0),
     )
 
     obs = np.array([1, 1, 1, 1])
@@ -153,7 +154,7 @@ def test_ddpg_box_deterministic():
         env=env,
         net=net,
         noise=None,
-        epsilon=0.0,
+        schedule=None,
     )
     obs = np.array([1])
     assert isinstance(policy([obs]), np.ndarray)
@@ -183,7 +184,7 @@ def test_ddpg_box_stochastic():
         net=net,
         env=env,
         noise=noise,
-        epsilon=1.0,
+        schedule=LinearSchedule(1.0),
     )
     obs = np.array([0])
     assert isinstance(policy([obs]), np.ndarray)
