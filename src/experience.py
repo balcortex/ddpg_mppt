@@ -74,7 +74,7 @@ class ExperienceSourceDiscounted(ExperienceSource):
         super().__init__(policy=policy, render=render)
 
         self.gamma = gamma
-        self.max_steps = n_steps
+        self.n_steps = n_steps
 
     def __next__(self):
         return self.play_n_steps()
@@ -84,7 +84,7 @@ class ExperienceSourceDiscounted(ExperienceSource):
         discounted_reward = 0.0
         reward = 0.0
 
-        for step_idx in range(self.max_steps):
+        for step_idx in range(self.n_steps):
             exp = self.play_step()
             reward += exp.reward
             discounted_reward += exp.reward * self.gamma ** (step_idx)
