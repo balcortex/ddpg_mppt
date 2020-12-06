@@ -38,7 +38,6 @@ train_exp_source = ExperienceSourceDiscountedSteps(
     gamma=GAMMA,
     n_steps=N_STEPS,
     steps=1,
-    # render=True,
 )
 test_exp_source = ExperienceSourceDiscountedSteps(
     policy=test_policy,

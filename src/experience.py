@@ -18,11 +18,6 @@ class ExperienceSource:
         self.render = render
 
         self.reset()
-        # self.obs = self.env.reset()
-        # self.done = False
-        # self.info = {}
-        # self.steps = 0
-        # self.episodes = 0
 
     def __iter__(self):
         return self
@@ -37,6 +32,8 @@ class ExperienceSource:
         self.info = {}
         self.step_counter = 0
         self.episode_counter = 0
+        self.episode_reward = 0.0
+        self.episode_rewards = []
 
     def play_step(self):
         self.step_counter += 1
@@ -47,10 +44,13 @@ class ExperienceSource:
         obs = self.obs
         action = self.policy(obs=[obs], info=self.info)
         new_obs, reward, done, self.info = self.env.step(action)
+        self.episode_reward += reward
         if self.render:
             self.env.render()
         if done:
             self.episode_counter += 1
+            self.episode_rewards.append(self.episode_reward)
+            self.episode_reward = 0.0
             self.done = True
             return Experience(state=obs, action=action, reward=reward, last_state=None)
         self.obs = new_obs
@@ -69,6 +69,18 @@ class ExperienceSource:
 
     def play_episodes(self, episodes):
         return [self.play_episode() for _ in range(episodes)]
+
+    @property
+    def last_episode_reward(self) -> float:
+        "Return the cumulative reward of the last episode"
+        if self.episode_rewards == []:
+            return None
+        return self.episode_rewards[-1]
+
+    def mean_rewards(self, episodes: int = 10):
+        "Return the mean reward of the last episodes"
+        episodes = min(episodes, len(self.episode_rewards))
+        return sum(self.episode_rewards[-episodes:]) / episodes
 
 
 class ExperienceSourceEpisodes(ExperienceSource):

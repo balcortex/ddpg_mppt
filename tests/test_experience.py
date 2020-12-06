@@ -79,6 +79,7 @@ def test_exp_source_discounted_1step():
     experience_1 = next(exp_source)
     experience_2 = next(exp_source)
     assert exp_source.step_counter == 2
+    assert exp_source.last_episode_reward == None
     assert np.array_equal(experience_1.last_state, experience_2.state)
     assert experience_1.discounted_reward == 1.0
     assert experience_1.reward == 1.0
@@ -95,6 +96,8 @@ def test_exp_source_discounted_1step():
     assert episode[-1].discounted_reward == 1.0
     assert episode[-1].steps == 1
     assert episode[-1].reward == 1
+    assert exp_source.step_counter == exp_source.last_episode_reward
+    assert exp_source.step_counter == exp_source.mean_rewards(episodes=3)
 
     env.reset()
     episodes = exp_source.play_episodes(episodes=3)
@@ -104,6 +107,29 @@ def test_exp_source_discounted_1step():
         assert episode[-1].discounted_reward == 1.0
         assert episode[-1].steps == 1
         assert episode[-1].reward == 1
+    assert len(episodes[-1]) == exp_source.last_episode_reward
+    assert exp_source.mean_rewards(episodes=4) == exp_source.step_counter / 4
+    assert exp_source.mean_rewards(episodes=5) == exp_source.step_counter / 4
+    assert (
+        len(episodes[0]) + len(episodes[1]) + len(episodes[2])
+        == exp_source.mean_rewards(episodes=3) * 3
+    )
+
+    exp_source.reset()
+    episodes = exp_source.play_episodes(episodes=3)
+    assert exp_source.episode_counter == 3
+    for episode in episodes:
+        assert episode[-1].last_state == None
+        assert episode[-1].discounted_reward == 1.0
+        assert episode[-1].steps == 1
+        assert episode[-1].reward == 1
+    assert len(episodes[-1]) == exp_source.last_episode_reward
+    assert exp_source.mean_rewards(episodes=4) == exp_source.step_counter / 3
+    assert exp_source.mean_rewards(episodes=5) == exp_source.step_counter / 3
+    assert (
+        len(episodes[0]) + len(episodes[1]) + len(episodes[2])
+        == exp_source.mean_rewards(episodes=3) * 3
+    )
 
     env = gym.make("Pendulum-v0")
     policy = RandomPolicy(env=env)

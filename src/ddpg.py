@@ -9,6 +9,7 @@ from typing import Optional, Tuple, Dict, Any, Sequence
 from src.common import TargetNet
 from src.replay_buffer import ReplayBuffer, Experience
 from collections import namedtuple
+from tqdm import tqdm
 
 Tensor = torch.Tensor
 Training_Batch = namedtuple(
@@ -139,10 +140,19 @@ class DDPGAgent:
         self._fill_buffer(num_experiences=batch_size)
 
     def learn(self, steps: int, log_every: int = -1) -> None:
-        for i in range(1, steps + 1):
+        losses = {}
+        for i in tqdm(range(1, steps + 1)):
             if i % log_every == 0 and log_every > 0:
-                print(f"Step: {i}")
+                print()
                 print(f"{losses}")
+                print(
+                    f"env_steps={self.train_exp_source.step_counter}, ",
+                    f"episodes={self.train_exp_source.episode_counter}",
+                )
+                print(
+                    f"last_rew={self.train_exp_source.last_episode_reward:.2f}, ",
+                    f"mean_rew={self.train_exp_source.mean_rewards(10):.2f}",
+                )
                 print()
             losses = self._train_net()
 
@@ -172,8 +182,8 @@ class DDPGAgent:
         self.target_critic.alpha_sync(alpha=self.tau)
 
         return {
-            "critic_loss": critic_loss.item(),
-            "actor_loss": actor_loss.item(),
+            "critic_loss": round(critic_loss.item(), 4),
+            "actor_loss": round(actor_loss.item(), 4),
         }
 
     def _prepare_training_batch(self) -> Training_Batch:
