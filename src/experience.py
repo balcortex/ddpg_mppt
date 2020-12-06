@@ -15,10 +15,14 @@ class ExperienceSource:
     def __init__(self, policy: BasePolicy, render: bool = False):
         self.policy = policy
         self.env = policy.env
-        self.obs = self.env.reset()
-        self.done = False
-        self.info = {}
         self.render = render
+
+        self.reset()
+        # self.obs = self.env.reset()
+        # self.done = False
+        # self.info = {}
+        # self.steps = 0
+        # self.episodes = 0
 
     def __iter__(self):
         return self
@@ -26,7 +30,16 @@ class ExperienceSource:
     def __next__(self):
         return self.play_step()
 
+    def reset(self) -> None:
+        "Reset the step and episode counter"
+        self.obs = self.env.reset()
+        self.done = False
+        self.info = {}
+        self.step_counter = 0
+        self.episode_counter = 0
+
     def play_step(self):
+        self.step_counter += 1
         if self.done:
             self.obs = self.env.reset()
             self.info = {}
@@ -37,6 +50,7 @@ class ExperienceSource:
         if self.render:
             self.env.render()
         if done:
+            self.episode_counter += 1
             self.done = True
             return Experience(state=obs, action=action, reward=reward, last_state=None)
         self.obs = new_obs
