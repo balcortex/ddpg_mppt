@@ -12,8 +12,8 @@ from collections import namedtuple
 from tqdm import tqdm
 
 Tensor = torch.Tensor
-Training_Batch = namedtuple(
-    "Training_Batch", field_names=["obs", "actions", "rewards", "dones", "last_obs"]
+TrainingBatch = namedtuple(
+    "TrainingBatch", field_names=["obs", "actions", "rewards", "dones", "last_obs"]
 )
 
 
@@ -114,6 +114,8 @@ class DDPGAgent:
         batch_size: int = 64,
         actor_lr: float = 1e-4,
         critic_lr: float = 1e-3,
+        actor_l2: float = 0.0,
+        critic_l2: float = 0.0,
         tau: float = 1e-3,
         norm_rewards: bool = False,
     ):
@@ -134,14 +136,18 @@ class DDPGAgent:
         self.gamma = self.train_exp_source.gamma
         self.n_steps = self.train_exp_source.n_steps
 
-        self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=actor_lr)
-        self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)
+        self.actor_optim = torch.optim.Adam(
+            self.actor.parameters(), lr=actor_lr, weight_decay=actor_l2
+        )
+        self.critic_optim = torch.optim.Adam(
+            self.critic.parameters(), lr=critic_lr, weight_decay=critic_l2
+        )
 
         self._fill_buffer(num_experiences=batch_size)
 
-    def learn(self, steps: int, log_every: int = -1) -> None:
+    def learn(self, epochs: int, train_steps: int = 1, log_every: int = -1) -> None:
         losses = {}
-        for i in tqdm(range(1, steps + 1)):
+        for i in tqdm(range(1, epochs + 1)):
             if i % log_every == 0 and log_every > 0:
                 print()
                 print(f"{losses}")
@@ -154,11 +160,28 @@ class DDPGAgent:
                     f"mean_rew={self.train_exp_source.mean_rewards(10):.2f}",
                 )
                 print()
-            losses = self._train_net()
 
-    def _train_net(self) -> Dict[Any, Any]:
-        batch = self._prepare_training_batch()
+            for j in range(train_steps):
+                batch = self._prepare_training_batch()
+                losses = self._train_net(batch)
 
+            self._play_step()
+
+    def save(self, path: str) -> None:
+        torch.save(
+            {
+                "critic_state_dict": self.critic.state_dict(),
+                "actor_state_dict": self.actor.state_dict(),
+            },
+            path,
+        )
+
+    # def load(self, path: str) -> None:
+    #     checkpoint = torch.load(path)
+    #     self.critic.load_state_dict(checkpoint["critic_state_dict"])
+    #     self.actor.load_state_dict(checkpoint["actor_state_dict"])
+
+    def _train_net(self, batch: TrainingBatch) -> Dict[Any, Any]:
         # - - - Critic Training - - -
         pred_last_act = self.target_actor(batch.last_obs)
         q_last = self.target_critic(batch.last_obs, pred_last_act).squeeze(-1)
@@ -168,6 +191,7 @@ class DDPGAgent:
         # .detach() to stop gradient propogation for q_ref
         critic_loss = torch.nn.functional.mse_loss(q_ref.detach(), q_pred)
         self.critic_optim.zero_grad()
+
         critic_loss.backward()
         self.critic_optim.step()
 
@@ -186,11 +210,12 @@ class DDPGAgent:
             "actor_loss": round(actor_loss.item(), 4),
         }
 
-    def _prepare_training_batch(self) -> Training_Batch:
-        "Get a training batch for networks weight update"
+    def _play_step(self) -> None:
         for disc_exp in next(self.train_exp_source):
             self._append_to_buffer(discounted_exp=disc_exp)
 
+    def _prepare_training_batch(self) -> TrainingBatch:
+        "Get a training batch for networks weight update"
         batch = self.buffer.sample(batch_size=self.batch_size)
         obs = torch.tensor(batch.observations, dtype=torch.float32)
         actions = torch.tensor(batch.actions, dtype=torch.float32)
@@ -201,13 +226,13 @@ class DDPGAgent:
         if self.norm_rewards:
             rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-6)
 
-        return Training_Batch(
+        return TrainingBatch(
             obs=obs, actions=actions, rewards=rewards, dones=dones, last_obs=last_obs
         )
 
     def _fill_buffer(self, num_experiences: int) -> None:
         "Fill the replay buffer with the specified num of experiences"
-        for _ in range(num_experiences):
+        for _ in tqdm(range(num_experiences), desc="Buffer"):
             disc_exp = self.train_exp_source.play_n_steps()
             self._append_to_buffer(discounted_exp=disc_exp)
 
