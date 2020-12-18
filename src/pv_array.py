@@ -38,6 +38,8 @@ class PVArray:
         self.ckp_path = ckp_path
         self._eng = engine
 
+        self.save_state_counter = 0
+
         self._init()
         self._init_history()
 
@@ -47,7 +49,11 @@ class PVArray:
         )
 
     def simulate(
-        self, voltage: float, irradiance: float, cell_temp: float
+        self,
+        voltage: float,
+        irradiance: float,
+        cell_temp: float,
+        save_every: int = 100,
     ) -> PVSimResult:
         """
         Simulate the simulink model
@@ -68,9 +74,13 @@ class PVArray:
         if self.hist[key]:
             result = PVSimResult(*self.hist[key])
         else:
+            self.save_state_counter += 1
             result = self._simulate(v, g, t)
             self.hist[key] = result
-            self._save_history(verbose=False)
+
+            if self.save_state_counter % save_every == 0:
+                self.save_state_counter = 0
+                self._save_history(verbose=False)
 
         return result
 
@@ -253,6 +263,7 @@ class PVArray:
 
     @staticmethod
     def mppt_eff(p_real: List[float], p: List[float]) -> float:
+        assert len(p_real) == len(p)
         return sum([p1 / p2 for p1, p2 in zip(p, p_real)]) * 100 / len(p_real)
 
     @property
