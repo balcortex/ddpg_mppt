@@ -3,6 +3,7 @@ import os
 from dataclasses import dataclass, field
 from math import atan2
 from typing import List, Optional
+import random
 
 import gym
 import matplotlib.pyplot as plt
@@ -100,6 +101,7 @@ class PVEnv(PVEnvBase):
         reward_fn: callable,
         seed: Optional[int] = None,
         v0: Optional[float] = None,
+        max_steps: Optional[int] = None,
     ) -> None:
 
         self.pvarray = pvarray
@@ -107,6 +109,7 @@ class PVEnv(PVEnvBase):
         self.states = states
         self.reward_fn = reward_fn
         self.v0 = v0
+        self.max_steps = min(max_steps or len(weather_df) - 1, len(weather_df) - 1)
         if seed:
             np.random.seed(seed)
 
@@ -115,8 +118,14 @@ class PVEnv(PVEnvBase):
 
     def reset(self) -> np.ndarray:
         self.history = History()
+
+        # check if there are more than one day
+        if self.max_steps == len(self.weather) - 1:
+            self.step_idx = 0
+        else:
+            self.step_idx = random.randint(0, len(self.weather) - self.max_steps - 1)
+
         self.step_counter = 0
-        self.step_idx = 0
         self.done = False
 
         v = self.v0 or np.random.randint(2, self.pvarray.voc)
@@ -137,7 +146,7 @@ class PVEnv(PVEnvBase):
 
         # if self.history.p[-1] < 0 or self.history.v[-1] < 1:
         #     self.done = True
-        if self.step_counter >= len(self.weather) - 1:
+        if self.step_counter >= self.max_steps:
             self.done = True
 
         info = {
@@ -166,8 +175,15 @@ class PVEnv(PVEnvBase):
             plt.legend()
             plt.show()
 
-    def render_vs_true(self, label: str = "RL", po: bool = False) -> None:
+    def render_vs_true(
+        self,
+        label: str = "RL",
+        po: bool = False,
+        show: bool = True,
+        save_path: Optional[str] = None,
+    ) -> float:
         p_real, v_real, _ = self.pvarray.get_true_mpp(self.history.g, self.history.t)
+        eff = PVArray.mppt_eff(p_real, self.history.p)
         if po:
             p_po, v_po, _ = self.pvarray.get_po_mpp(
                 self.history.g,
@@ -181,17 +197,33 @@ class PVEnv(PVEnvBase):
         if po:
             plt.plot(p_po, label="P P&O")
         plt.legend()
-        plt.show()
+        if show:
+            plt.show()
+        if save_path:
+            path = fname = save_path + "_p_" + f"{eff:.2f}.png"
+            plt.savefig(path)
+            logger.info(f"Saved to {path}")
+
+        plt.clf()
         plt.plot(v_real, label="Vmpp")
         plt.plot(self.history.v, label=f"V {label}")
         if po:
             plt.plot(v_po, label="V P&O")
         plt.legend()
-        plt.show()
+
+        if show:
+            plt.show()
+        if save_path:
+            plt.savefig(fname=save_path + "_v.png")
+            logger.info(f'Saved to {save_path + "_v.png"}')
+
+        plt.clf()
 
         if po:
             logger.info(f"PO Efficiency={PVArray.mppt_eff(p_real, p_po)}")
-        logger.info(f"RL Efficiency={PVArray.mppt_eff(p_real, self.history.p)}")
+        logger.info(f"{label} Efficiency={eff}")
+
+        return eff
 
     def _add_history(self, p, v, i, g, t) -> None:
         self.history.p.append(p)
