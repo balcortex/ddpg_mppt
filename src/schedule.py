@@ -34,6 +34,9 @@ class ConstantSchedule(Schedule):
     def __call__(self) -> float:
         return self.epsilon
 
+    def __repr__(self) -> str:
+        return f"ConstantSchedule, eps={self.epsilon}"
+
     def step(self, steps: int = 1) -> float:
         return self.epsilon
 
@@ -70,6 +73,9 @@ class LinearSchedule(Schedule):
 
     def __call__(self) -> float:
         return max(self.eps_final, self.eps_start - self.current_step / self.max_steps)
+
+    def __repr__(self) -> str:
+        return f"LinearSchedule, start={self.eps_start}, end={self.eps_final}, steps={self.max_steps}"
 
     def step(self, steps: int = 1) -> float:
         "Increment the step counter and return the current value of epsilon"

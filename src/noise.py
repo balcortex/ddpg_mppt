@@ -30,6 +30,9 @@ class OUNoise(Noise):
         self.dt = dt
         self.reset()
 
+    def __repr__(self) -> str:
+        return f"OUNoise, mean={self.mean}, std={self.std}, theta={self.theta}, dt={self.dt}"
+
     def reset(self) -> float:
         "Reset the state of the noise"
         self.state = self.mean
@@ -58,6 +61,9 @@ class GaussianNoise(Noise):
     def __init__(self, mean, std):
         self.mean = mean
         self.std = std
+
+    def __repr__(self) -> str:
+        return f"GaussianNoise, mean={self.mean}, std={self.std}"
 
     def reset(self) -> float:
         return np.random.normal(self.mean, self.std)
