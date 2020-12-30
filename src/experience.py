@@ -1,6 +1,7 @@
 import collections
 import gym
 from src.policies import BasePolicy
+import numpy as np
 
 Experience = collections.namedtuple(
     "Experience", ["state", "action", "reward", "last_state"]
@@ -74,11 +75,13 @@ class ExperienceSource:
     def last_episode_reward(self) -> float:
         "Return the cumulative reward of the last episode"
         if self.episode_rewards == []:
-            return None
+            return np.nan
         return self.episode_rewards[-1]
 
     def mean_rewards(self, episodes: int = 10):
         "Return the mean reward of the last episodes"
+        if self.episode_rewards == []:
+            return np.nan
         episodes = min(episodes, len(self.episode_rewards))
         return sum(self.episode_rewards[-episodes:]) / episodes
 

@@ -102,6 +102,7 @@ class PVEnv(PVEnvBase):
         seed: Optional[int] = None,
         v0: Optional[float] = None,
         max_steps: Optional[int] = None,
+        deterministic: bool = False,
     ) -> None:
 
         self.pvarray = pvarray
@@ -112,21 +113,20 @@ class PVEnv(PVEnvBase):
         self.max_steps = min(max_steps or len(weather_df) - 1, len(weather_df) - 1)
         if seed:
             np.random.seed(seed)
+        self.deterministic = deterministic
 
         self.action_space = self._get_action_space()
         self.observation_space = self._get_observation_space()
 
     def reset(self) -> np.ndarray:
         self.history = History()
-
-        # check if there are more than one day
-        if self.max_steps == len(self.weather) - 1:
-            self.step_idx = 0
-        else:
-            self.step_idx = random.randint(0, len(self.weather) - self.max_steps - 1)
-
         self.step_counter = 0
         self.done = False
+
+        if self.deterministic:
+            self.step_idx = 0
+        else:
+            self.step_idx = random.randint(0, len(self.weather) - 1)
 
         v = self.v0 or np.random.randint(2, self.pvarray.voc)
 
@@ -138,6 +138,9 @@ class PVEnv(PVEnvBase):
 
         self.step_idx += 1
         self.step_counter += 1
+
+        if self.step_idx == len(self.weather):
+            self.step_idx = 0
 
         delta_v = self._get_delta_v(action)
         v = np.clip(self.v + delta_v, 0, self.pvarray.voc)
@@ -274,8 +277,8 @@ class PVEnv(PVEnvBase):
 
     def _get_action_space(self) -> gym.Space:
         return gym.spaces.Box(
-            low=-round(self.pvarray.voc * 0.1, 0),
-            high=round(self.pvarray.voc * 0.1, 0),
+            low=-round(self.pvarray.voc * 0.9, 0),
+            high=round(self.pvarray.voc * 0.9, 0),
             shape=(1,),
             dtype=np.float32,
         )
