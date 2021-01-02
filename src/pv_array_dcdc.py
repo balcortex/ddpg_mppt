@@ -349,7 +349,6 @@ class PVArray:
 
 
 if __name__ == "__main__":
-    # import matplotlib.pyplot as plt
     import matlab.engine
 
     pv_params_path = os.path.join("parameters", "01_pvarray.json")
