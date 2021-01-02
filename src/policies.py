@@ -199,6 +199,7 @@ class PerturbObservePolicy(BasePolicy):
         noise: Optional[Noise] = None,
         schedule: Optional[Schedule] = None,
         decrease_noise: bool = False,
+        dcdc_converter: bool = False,
     ):
         super().__init__(
             env=env,
@@ -209,6 +210,7 @@ class PerturbObservePolicy(BasePolicy):
         self.v_step = v_step
         self.dv_index = dv_index
         self.dp_index = dp_index
+        self.dcdc_converter = dcdc_converter
 
         self.dp_in_obs = False
         self.dv_in_obs = False
@@ -250,6 +252,9 @@ class PerturbObservePolicy(BasePolicy):
                 action = -self.v_step
             else:
                 action = self.v_step
+
+        if self.dcdc_converter:
+            action = -action
 
         action = np.array([action])
         action = self._process_actions(action)
