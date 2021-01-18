@@ -24,6 +24,7 @@ StepResult = collections.namedtuple(
 
 @dataclass
 class History:
+    date: list = field(default_factory=list)
     g: list = field(default_factory=list)
     amb_t: list = field(default_factory=list)
     cell_t: list = field(default_factory=list)
@@ -31,6 +32,7 @@ class History:
     v: list = field(default_factory=list)
     i: list = field(default_factory=list)
     duty_cycle: list = field(default_factory=list)
+    dduty_cycle: list = field(default_factory=list)
     dp: list = field(default_factory=list)
     dv: list = field(default_factory=list)
     di: list = field(default_factory=list)
@@ -142,6 +144,12 @@ class PVEnv(PVEnvBase):
         self.step_idx += 1
         self.step_counter += 1
 
+        # Reset the duty cycle for a new day
+        day = str(self.weather.index[self.step_idx - 1])[:10]
+        day_ = str(self.weather.index[self.step_idx])[:10]
+        if day != day_:
+            self.dc = np.random.rand() if self.dc0 == None else self.dc0
+
         if self.step_idx == len(self.weather):
             self.step_idx = 0
 
@@ -174,6 +182,26 @@ class PVEnv(PVEnvBase):
             info,
         )
 
+    def save_dataframe(self, path: str, include_true_mpp: bool = False) -> None:
+        df = pd.DataFrame()
+        df["Date"] = self.history.date
+        df["Irradiance"] = self.history.g
+        df["Ambient Temperature"] = self.history.amb_t
+        df["Cell Temperature"] = self.history.cell_t
+        df["PV Power"] = self.history.p
+        df["PV Voltage"] = self.history.v
+        df["Duty Cycle"] = self.history.duty_cycle
+
+        if include_true_mpp:
+            p_real, v_real, _, dc_real, *_ = self.pvarray.get_true_mpp(
+                self.history.g, self.history.amb_t
+            )
+            df["PV Maximum Power"] = p_real
+            df["PV Optimum Voltage"] = v_real
+            df["Optimum Duty Cycle"] = dc_real
+
+        df.to_csv(path, index=False)
+
     def render(self, vars: List[str]) -> None:
         for var in vars:
             plt.plot(getattr(self.history, var), label=var)
@@ -185,14 +213,15 @@ class PVEnv(PVEnvBase):
         label: str = "RL",
         show: bool = True,
         save_path: Optional[str] = None,
+        dcdc_converter: Optional[bool] = True,
     ) -> float:
-        p_real, v_real, *_ = self.pvarray.get_true_mpp(
+        p_real, v_real, _, dc_real, *_ = self.pvarray.get_true_mpp(
             self.history.g, self.history.amb_t
         )
         eff = PVArray.mppt_eff(p_real, self.history.p)
 
-        plt.plot(p_real, label="P Max")
         plt.plot(self.history.p, label=f"P {label}")
+        plt.plot(p_real, label="P Max")
         plt.legend()
         if show:
             plt.show()
@@ -203,8 +232,8 @@ class PVEnv(PVEnvBase):
 
         plt.clf()
 
-        plt.plot(v_real, label="Vmpp")
         plt.plot(self.history.v, label=f"V {label}")
+        plt.plot(v_real, label="Vmpp")
         plt.legend()
         if show:
             plt.show()
@@ -214,11 +243,24 @@ class PVEnv(PVEnvBase):
 
         plt.clf()
 
+        if dcdc_converter:
+            plt.plot(self.history.duty_cycle, label=f"DC {label}")
+            plt.plot(dc_real, label="DCmpp")
+            plt.legend()
+            if show:
+                plt.show()
+            if save_path:
+                plt.savefig(fname=save_path + "_dc.png")
+                logger.info(f'Saved to {save_path + "_dc.png"}')
+
+            plt.clf()
+
         logger.info(f"{label} Efficiency={eff}")
 
         return eff
 
-    def _add_history(self, p, v, i, g, amb_t, cell_t, dc) -> None:
+    def _add_history(self, p, v, i, g, amb_t, cell_t, dc, date) -> None:
+        self.history.date.append(date)
         self.history.p.append(p)
         self.history.v.append(v)
         self.history.i.append(i)
@@ -240,6 +282,7 @@ class PVEnv(PVEnvBase):
             self.history.deg.append(0.0)
             self.history.dp_norm.append(0.0)
             self.history.dv_norm.append(0.0)
+            self.history.dduty_cycle.append(0.0)
         else:
             self.history.dp.append(self.history.p[-1] - self.history.p[-2])
             self.history.dv.append(self.history.v[-1] - self.history.v[-2])
@@ -253,6 +296,9 @@ class PVEnv(PVEnvBase):
             self.history.deg.append(
                 atan2(self.history.di[-1], self.history.dv[-1])
                 + atan2(self.history.i[-1], self.history.v[-1])
+            )
+            self.history.dduty_cycle.append(
+                self.history.duty_cycle[-1] - self.history.duty_cycle[-2]
             )
 
     def _get_delta_dc(self, action: float) -> float:
@@ -277,10 +323,11 @@ class PVEnv(PVEnvBase):
         )
 
     def _store_step(self, dc: float) -> np.ndarray:
+        date = str(self.weather.index[self.step_idx])
         g, t = self.weather[["Irradiance", "Temperature"]].iloc[self.step_idx]
         p, v, i, self.dc, g, t, cell_t = self.pvarray.simulate(dc, g, t)
         p = max(0, p)
-        self._add_history(p, v, i, g, t, cell_t, dc)
+        self._add_history(p, v, i, g, t, cell_t, dc, date)
 
         # getattr(handler.request, 'GET') is the same as handler.request.GET
         return np.array([getattr(self.history, state)[-1] for state in self.states])
