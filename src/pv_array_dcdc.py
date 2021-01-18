@@ -11,8 +11,11 @@ from collections import defaultdict
 
 from src import utils
 from src.logger import logger
-from src.matlab_api import set_parameters
+from src.matlab_api import set_parameters, get_parameter
 from src.utils import read_weather_csv
+
+SIM_TIME = "0.5"
+MODEL_NAME = "matlab_model_converter_rload_2"
 
 PVSimResult = namedtuple(
     "PVSimResult",
@@ -46,7 +49,7 @@ class PVArray:
         """
         self._params = params
         self.float_precision = f_precision
-        self._model_path = os.path.join("src", "matlab_model_converter")
+        self._model_path = os.path.join("src", MODEL_NAME)
         self.ckp_path = ckp_path
         self._eng = engine
 
@@ -57,7 +60,7 @@ class PVArray:
 
     def __repr__(self) -> str:
         return (
-            f"PVArray {float(self.params['Im']) * float(self.params['Vm']):.0f} Watts"
+            f"PVArray {float(self.params['Im']) * float(self.params['Vm']):.0f} Watts "
             + "dc-dc converter"
         )
 
@@ -102,7 +105,7 @@ class PVArray:
         self,
         irradiance: Union[float, List[float]],
         ambient_temp: Union[float, List[float]],
-        ftol: float = 1e-12,
+        ftol: float = 1e-9,
         verbose: bool = False,
     ) -> PVSimResult:
         """Get the real MPP for the specified inputs
@@ -124,7 +127,7 @@ class PVArray:
         irradiances, ambient_temps, cell_temps = [], [], []
 
         float_precision = self.float_precision
-        self.float_precision = 12
+        self.float_precision = 4
 
         for g, t in tqdm(
             list(zip(irradiance, ambient_temp)),
@@ -223,7 +226,7 @@ class PVArray:
         self._eng.eval(f"cd '{os.getcwd()}'", nargout=0)
         self._eng.eval('model = "{}";'.format(self._model_path), nargout=0)
         self._eng.eval("load_system(model)", nargout=0)
-        set_parameters(self._eng, self.model_name, {"StopTime": "1e-3"})
+        set_parameters(self._eng, self.model_name, {"StopTime": SIM_TIME})
         set_parameters(self._eng, [self.model_name, "PV Array"], self.params)
         logger.info("Model loaded succesfully.")
 
@@ -304,11 +307,19 @@ class PVArray:
     def _start_simulation(self) -> None:
         "Start the simulation command"
         set_parameters(self._eng, self.model_name, {"SimulationCommand": "start"})
+        while True:
+            status = get_parameter(self._eng, self.model_name, "SimulationStatus")
+            if status == "stopped":
+                break
 
     @staticmethod
     def mppt_eff(p_real: List[float], p: List[float]) -> float:
         assert len(p_real) == len(p)
-        return sum([p1 / p2 for p1, p2 in zip(p, p_real)]) * 100 / len(p_real)
+        return (
+            sum([(p1 * 60) / (p2 * 60) for p1, p2 in zip(p, p_real)])
+            * 100
+            / len(p_real)
+        )
 
     @property
     def voc(self) -> float:
@@ -359,13 +370,12 @@ if __name__ == "__main__":
         path=pv_params_path,
         ckp_path=pvarray_ckp_path,
         engine=engine,
-        f_precision=3,
     )
 
-    for g in [100, 400, 1000]:
-        for amb_t in [25, 35, 45]:
-            p, v, i, dc, g_, amb_t_, cell_t = pvarray.get_true_mpp(g, amb_t)
-            print(f"p={p}, v={v}, dc={dc}, g={g_}, amb_t={amb_t_}, cell_t={cell_t}")
+    # for g in [100, 400, 1000]:
+    #     for amb_t in [25, 35, 45]:
+    #         p, v, i, dc, g_, amb_t_, cell_t = pvarray.get_true_mpp(g, amb_t)
+    #         print(f"p={p}, v={v}, dc={dc}, g={g_}, amb_t={amb_t_}, cell_t={cell_t}")
 
     g, amb_t = 1000, -6.25
     p, v, i, dc, g_, amb_t_, cell_t = pvarray.get_true_mpp(g, amb_t)
