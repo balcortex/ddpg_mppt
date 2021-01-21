@@ -12,7 +12,7 @@ import pandas as pd
 
 from src.logger import logger
 from src.pv_array_dcdc import PVArray
-from src.utils import read_weather_csv
+from src.utils import read_weather_csv, efficiency
 
 G_MAX = 1200
 T_MAX = 60
@@ -104,34 +104,30 @@ class PVEnv(PVEnvBase):
         weather_df: pd.DataFrame,
         reward_fn: callable,
         states: List[str] = ["p_norm", "v_norm", "dp", "dv", "duty_cycle"],
-        seed: Optional[int] = None,
         dc0: Optional[float] = None,
-        max_steps: Optional[int] = None,
-        deterministic: bool = False,
+        day_index: int = 0,
     ) -> None:
-
         self.pvarray = pvarray
-        self.weather = weather_df
+        self.weather = [group[1] for group in weather_df.groupby(weather_df.index.day)]
         self.states = states
         self.reward_fn = reward_fn
         self.dc0 = dc0
-        self.max_steps = min(max_steps or len(weather_df) - 1, len(weather_df) - 1)
-        if seed:
-            np.random.seed(seed)
-        self.deterministic = deterministic
+        self.day_idx = day_index - 1
 
         self.action_space = self._get_action_space()
         self.observation_space = self._get_observation_space()
 
     def reset(self) -> np.ndarray:
-        self.history = History()
-        self.step_counter = 0
         self.done = False
+        self.history = History()
+        self.step_idx = 0
 
-        if self.deterministic:
-            self.step_idx = 0
-        else:
-            self.step_idx = random.randint(0, len(self.weather) - 1)
+        self.day_idx = (self.day_idx + 1) % len(self.weather)
+
+        # TODO delete if works
+        # self.day_idx += 1
+        # if self.day_idx == len(self.weather):
+        #     self.day_idx = 0
 
         dc = np.random.rand() if self.dc0 == None else self.dc0
 
@@ -142,30 +138,16 @@ class PVEnv(PVEnvBase):
             raise ValueError("The episode is done")
 
         self.step_idx += 1
-        self.step_counter += 1
-
-        # Reset the duty cycle for a new day
-        day = str(self.weather.index[self.step_idx - 1])[:10]
-        day_ = str(self.weather.index[self.step_idx])[:10]
-        if day != day_:
-            self.dc = np.random.rand() if self.dc0 == None else self.dc0
-
-        if self.step_idx == len(self.weather):
-            self.step_idx = 0
-
         delta_dc = self._get_delta_dc(action)
         dc = np.clip(self.dc + delta_dc, 0.0, 1.0)
         obs = self._store_step(dc)
         reward = self.reward_fn(self.history)
 
-        # if self.history.p[-1] < 0 or self.history.v[-1] < 1:
-        #     self.done = True
-        if self.step_counter >= self.max_steps:
+        if self.step_idx == len(self.weather[self.day_idx]) - 1:
             self.done = True
 
         info = {
             "step_idx": self.step_idx,
-            "steps": self.step_counter,
             "dp": self.history.dp[-1],
             "dv": self.history.dv[-1],
             "g": self.history.g[-1],
@@ -213,12 +195,11 @@ class PVEnv(PVEnvBase):
         label: str = "RL",
         show: bool = True,
         save_path: Optional[str] = None,
-        dcdc_converter: Optional[bool] = True,
     ) -> float:
         p_real, v_real, _, dc_real, *_ = self.pvarray.get_true_mpp(
             self.history.g, self.history.amb_t
         )
-        eff = PVArray.mppt_eff(p_real, self.history.p)
+        eff = efficiency(p_real, self.history.p)
 
         plt.plot(self.history.p, label=f"P {label}")
         plt.plot(p_real, label="P Max")
@@ -229,7 +210,6 @@ class PVEnv(PVEnvBase):
             path = fname = save_path + "_p_" + f"{eff:.2f}.png"
             plt.savefig(path)
             logger.info(f"Saved to {path}")
-
         plt.clf()
 
         plt.plot(self.history.v, label=f"V {label}")
@@ -240,20 +220,17 @@ class PVEnv(PVEnvBase):
         if save_path:
             plt.savefig(fname=save_path + "_v.png")
             logger.info(f'Saved to {save_path + "_v.png"}')
-
         plt.clf()
 
-        if dcdc_converter:
-            plt.plot(self.history.duty_cycle, label=f"DC {label}")
-            plt.plot(dc_real, label="DCmpp")
-            plt.legend()
-            if show:
-                plt.show()
-            if save_path:
-                plt.savefig(fname=save_path + "_dc.png")
-                logger.info(f'Saved to {save_path + "_dc.png"}')
-
-            plt.clf()
+        plt.plot(self.history.duty_cycle, label=f"DC {label}")
+        plt.plot(dc_real, label="DCmpp")
+        plt.legend()
+        if show:
+            plt.show()
+        if save_path:
+            plt.savefig(fname=save_path + "_dc.png")
+            logger.info(f'Saved to {save_path + "_dc.png"}')
+        plt.clf()
 
         logger.info(f"{label} Efficiency={eff}")
 
@@ -323,11 +300,13 @@ class PVEnv(PVEnvBase):
         )
 
     def _store_step(self, dc: float) -> np.ndarray:
-        date = str(self.weather.index[self.step_idx])
-        g, t = self.weather[["Irradiance", "Temperature"]].iloc[self.step_idx]
-        p, v, i, self.dc, g, t, cell_t = self.pvarray.simulate(dc, g, t)
+        date = str(self.weather[self.day_idx].index[self.step_idx])
+        g = int(self.weather[self.day_idx]["Irradiance"].iloc[self.step_idx])
+        t = float(self.weather[self.day_idx]["Temperature"].iloc[self.step_idx])
+
+        p, v, i, self.dc, g, _, cell_t = self.pvarray.simulate(dc, g, int(t))
         p = max(0, p)
-        self._add_history(p, v, i, g, t, cell_t, dc, date)
+        self._add_history(p, v, i, g, t, cell_t, self.dc, date)
 
         # getattr(handler.request, 'GET') is the same as handler.request.GET
         return np.array([getattr(self.history, state)[-1] for state in self.states])
