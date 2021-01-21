@@ -3,6 +3,8 @@ dig/
 src/matlab_model.slx.autosave
 src/matlab_model_converter.slx.autosave
 slprj/
+{*
+*.slxc
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
