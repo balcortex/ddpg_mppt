@@ -84,7 +84,7 @@ class RewardPowerDeltaPower:
     Returns a reward based on the produced power
     """
 
-    def __init__(self, norm: bool = False):
+    def __init__(self, norm: bool = True):
         self.norm = norm
 
     def __call__(self, history: History) -> float:

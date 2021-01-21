@@ -69,7 +69,7 @@ class PVArray:
         duty_cycle: float,
         irradiance: float,
         ambient_temp: float,
-        save_every: int = 10,
+        save_every: int = 1,
     ) -> PVSimResult:
         """
         Simulate the simulink model
@@ -309,7 +309,7 @@ class PVArray:
         set_parameters(self._eng, self.model_name, {"SimulationCommand": "start"})
         while True:
             status = get_parameter(self._eng, self.model_name, "SimulationStatus")
-            if status == "stopped":
+            if status in ["stopped", "compiled"]:
                 break
 
     @staticmethod
