@@ -115,6 +115,9 @@ class RandomPolicy(BasePolicy):
         """
         return self.env.action_space.sample()
 
+    def __str__(self):
+        return "RandomPolicy"
+
 
 class DDPGPolicy(BasePolicy):
     """
@@ -173,6 +176,9 @@ class DDPGPolicy(BasePolicy):
         actions = self.low + (scled_actions + 1) * (self.high - self.low) / 2
         return actions
 
+    def __str__(self):
+        return "DDPGPolicy"
+
 
 class PerturbObservePolicy(BasePolicy):
     """
@@ -199,7 +205,6 @@ class PerturbObservePolicy(BasePolicy):
         noise: Optional[Noise] = None,
         schedule: Optional[Schedule] = None,
         decrease_noise: bool = False,
-        dcdc_converter: bool = False,
     ):
         super().__init__(
             env=env,
@@ -210,7 +215,6 @@ class PerturbObservePolicy(BasePolicy):
         self.v_step = v_step
         self.dv_index = dv_index
         self.dp_index = dp_index
-        self.dcdc_converter = dcdc_converter
 
         self.dp_in_obs = False
         self.dv_in_obs = False
@@ -253,12 +257,244 @@ class PerturbObservePolicy(BasePolicy):
             else:
                 action = self.v_step
 
-        if self.dcdc_converter:
-            action = -action
+        action = np.array([action])
+        action = self._process_actions(action)
+
+        return action
+
+    def __str__(self):
+        return "POPolicy"
+
+
+class PerturbObservePolicyDCDC(PerturbObservePolicy):
+    def __call__(
+        self,
+        obs: np.ndarray,
+        info: Optional[Dict[Any, Any]] = None,
+    ) -> np.ndarray:
+        if self.dp_in_obs:
+            delta_p = obs[0][self.dp_index]
+        else:
+            delta_p = info.get(self.dp_index, 0.0)
+
+        if self.dv_in_obs:
+            delta_v = obs[0][self.dv_index]
+        else:
+            delta_v = info.get(self.dv_index, 0.0)
+
+        if delta_p >= 0:
+            if delta_v > 0:
+                action = -self.v_step
+            else:
+                action = self.v_step
+        else:
+            if delta_v >= 0:
+                action = self.v_step
+            else:
+                action = -self.v_step
 
         action = np.array([action])
         action = self._process_actions(action)
+
         return action
+
+    def __str__(self):
+        return "POPolicy"
+
+
+# class PerturbObservePolicyDCDC(BasePolicy):
+#     """
+#     Perturb & Observe algorithm
+
+#     Parameters:
+#         env: gym environment used to scale the actions
+#         dc_step: magnitude of the perturbation on the duty cycle
+#         dv_index: index of the dv state (v - v_old). If the index is an int,
+#             the variable must be passed on the obs parameter, if is a str, it is
+#             localized in the info parameter
+#         dp_index: index of the dp state (p - p_old)
+#         dc_index: index of the last duty cycle
+#         noise: sample noise from this object to perform exploration
+#         schedule: class that keep track of epsilon
+#         decrease_noise: whether to multiply the noise by epsilon
+#     """
+
+#     def __init__(
+#         self,
+#         env: gym.Env,
+#         dc_step: float,
+#         dv_index: Union[int, str],
+#         dp_index: Union[int, str],
+#         dc_index: Union[int, str],
+#         noise: Optional[Noise] = None,
+#         schedule: Optional[Schedule] = None,
+#         decrease_noise: bool = False,
+#     ):
+#         super().__init__(
+#             env=env,
+#             noise=noise,
+#             schedule=schedule,
+#             decrease_noise=decrease_noise,
+#         )
+#         self.dc_step = dc_step
+#         self.dv_index = dv_index
+#         self.dp_index = dp_index
+#         self.dc_index = dc_index
+
+#         self.dp_in_obs = False
+#         self.dv_in_obs = False
+#         self.dc_in_obs = False
+
+#         if isinstance(self.dp_index, int):
+#             self.dp_in_obs = True
+#         if isinstance(self.dv_index, int):
+#             self.dv_in_obs = True
+#         if isinstance(self.dc_index, int):
+#             self.dc_in_obs = True
+
+#     def __call__(
+#         self,
+#         obs: np.ndarray,
+#         info: Optional[Dict[Any, Any]] = None,
+#     ) -> np.ndarray:
+#         """
+#         Get an action according to the observation
+
+#         Parameters:
+#             obs: observations from the environment
+#             info: additional info passed to the policy
+#         """
+#         if self.dp_in_obs:
+#             delta_p = obs[0][self.dp_index]
+#         else:
+#             delta_p = info.get(self.dp_index, 0.0)
+
+#         if self.dv_in_obs:
+#             delta_v = obs[0][self.dv_index]
+#         else:
+#             delta_v = info.get(self.dv_index, 0.0)
+
+#         if self.dc_in_obs:
+#             duty_cycle = obs[0][self.dc_index]
+#         else:
+#             duty_cycle = info.get(self.dc_index, 0.0)
+
+#         # print(f"dp={delta_p}, dv={delta_v}, duty={duty_cycle}")
+
+#         if delta_p >= 0:
+#             if delta_v >= 0:
+#                 if duty_cycle == 1.0:
+#                     action = self.dc_step
+#                 else:
+#                     action = -self.dc_step
+#             else:
+#                 if duty_cycle == 0.0:
+#                     action = -self.dc_step
+#                 else:
+#                     action = self.dc_step
+#         else:
+#             if delta_v >= 0:
+#                 if duty_cycle == 1.0:
+#                     action = self.dc_step
+#                 else:
+#                     action = -self.dc_step
+#             else:
+#                 if duty_cycle == 0.0:
+#                     action = -self.dc_step
+#                 else:
+#                     action = self.dc_step
+
+#         print(f"dp={delta_p}, dv={delta_v}, duty={duty_cycle}, action={action}")
+
+#         action = np.array([action])
+#         action = self._process_actions(action)
+
+#         return action
+
+
+# class PerturbObservePolicyDCDC2(BasePolicy):
+#     """
+#     Perturb & Observe algorithm
+
+#     Parameters:
+#         env: gym environment used to scale the actions
+#         dc_step: magnitude of the perturbation on the duty cycle
+#         dp_index: index of the dp state (p - p_old)
+#         ddc_index: index of the change of duty cycle
+#         noise: sample noise from this object to perform exploration
+#         schedule: class that keep track of epsilon
+#         decrease_noise: whether to multiply the noise by epsilon
+#     """
+
+#     def __init__(
+#         self,
+#         env: gym.Env,
+#         dc_step: float,
+#         dp_index: Union[int, str],
+#         ddc_index: Union[int, str],
+#         noise: Optional[Noise] = None,
+#         schedule: Optional[Schedule] = None,
+#         decrease_noise: bool = False,
+#     ):
+#         super().__init__(
+#             env=env,
+#             noise=noise,
+#             schedule=schedule,
+#             decrease_noise=decrease_noise,
+#         )
+#         self.dc_step = dc_step
+#         self.dp_index = dp_index
+#         self.ddc_index = ddc_index
+
+#         self.dp_in_obs = False
+#         self.ddc_in_obs = False
+
+#         if isinstance(self.dp_index, int):
+#             self.dp_in_obs = True
+#         if isinstance(self.ddc_index, int):
+#             self.ddc_in_obs = True
+
+#     def __call__(
+#         self,
+#         obs: np.ndarray,
+#         info: Optional[Dict[Any, Any]] = None,
+#     ) -> np.ndarray:
+#         """
+#         Get an action according to the observation
+
+#         Parameters:
+#             obs: observations from the environment
+#             info: additional info passed to the policy
+#         """
+#         if self.dp_in_obs:
+#             delta_p = obs[0][self.dp_index]
+#         else:
+#             delta_p = info.get(self.dp_index, 0.0)
+
+#         if self.ddc_in_obs:
+#             dduty_cycle = obs[0][self.ddc_index]
+#         else:
+#             dduty_cycle = info.get(self.ddc_index, 0.0)
+
+#         # print(f"dp={delta_p}, dv={delta_v}, duty={duty_cycle}")
+
+#         if delta_p >= 0:
+#             if dduty_cycle >= 0:
+#                 action = self.dc_step
+#             else:
+#                 action = -self.dc_step
+#         else:
+#             if dduty_cycle >= 0:
+#                 action = -self.dc_step
+#             else:
+#                 action = self.dc_step
+
+#         # print(f"dp={delta_p}, dv={delta_v}, duty={duty_cycle}, action={action}")
+
+#         action = np.array([action])
+#         action = self._process_actions(action)
+
+#         return action
 
 
 class MPPPolicy(BasePolicy):
