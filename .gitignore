@@ -5,6 +5,9 @@ src/matlab_model_converter.slx.autosave
 slprj/
 {*
 *.slxc
+figs/
+dataframes/
+*.autosave
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

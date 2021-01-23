@@ -4,7 +4,7 @@ import os
 
 from src.experience import ExperienceSourceDiscountedSteps
 from src.noise import GaussianNoise
-from src.policies import PerturbObservePolicyDCDC
+from src.policies import RandomPolicy
 from src.pv_env_dcdc import PVEnv
 from src.reward import RewardPowerDeltaPower
 from src.schedule import ConstantSchedule
@@ -35,7 +35,6 @@ schedule = ConstantSchedule(1.0)
 pvarray = PVArray.from_json(
     path=PV_PARAMS_PATH,
     engine=engine,
-    model_name="pv_boost_avg_rload",
 )
 weather_train_df = read_weather_csv(WEATHER_REAL_TRAIN_PATH)
 weather_test_df = read_weather_csv(WEATHER_REAL_TEST_PATH)
@@ -49,14 +48,9 @@ env = PVEnv(
     day_index=0,
 )
 
-po_policy = PerturbObservePolicyDCDC(
-    env=env,
-    v_step=0.02,
-    dv_index="dv",
-    dp_index="dp",
-)
+random_policy = RandomPolicy(env)
 po_source = ExperienceSourceDiscountedSteps(
-    policy=po_policy,
+    policy=random_policy,
     gamma=GAMMA,
     n_steps=N_STEPS,
     steps=1,
@@ -68,7 +62,5 @@ po_source = ExperienceSourceDiscountedSteps(
 )
 
 po_source.play_episode()
-env.render_vs_true(label="PO")
-# env.render(["p", "v", "duty_cycle"])\
-
-pvarray.save()
+env.render_vs_true(label="Random")
+# env.render(["p", "v", "duty_cycle"])

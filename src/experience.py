@@ -2,6 +2,15 @@ import collections
 import gym
 from src.policies import BasePolicy
 import numpy as np
+import datetime
+import os
+from typing import Dict, Any
+import time
+
+from src.logger import logger
+
+DATAFRAME_BASEPATH = os.path.join("data", "dataframes")
+
 
 Experience = collections.namedtuple(
     "Experience", ["state", "action", "reward", "last_state"]
@@ -13,10 +22,21 @@ ExperienceDiscounted = collections.namedtuple(
 
 
 class ExperienceSource:
-    def __init__(self, policy: BasePolicy, render: bool = False):
+    def __init__(
+        self,
+        policy: BasePolicy,
+        render: bool = False,
+        pvenv_kwargs: Dict[str, Any] = {},
+    ):
         self.policy = policy
         self.env = policy.env
         self.render = render
+        self.save_dataframe = pvenv_kwargs.get("save_dataframe", False)
+        self.include_true_mpp = pvenv_kwargs.get("include_true_mpp", False)
+        self.policy_name = pvenv_kwargs.get("policy_name", None)
+
+        if self.policy_name:
+            self.policy_name = self.policy_name + "_" + self.env.pvarray.model_name
 
         self.reset()
 
@@ -53,6 +73,8 @@ class ExperienceSource:
             self.episode_rewards.append(self.episode_reward)
             self.episode_reward = 0.0
             self.done = True
+            if self.save_dataframe:
+                self.save()
             return Experience(state=obs, action=action, reward=reward, last_state=None)
         self.obs = new_obs
         return Experience(state=obs, action=action, reward=reward, last_state=new_obs)
@@ -85,10 +107,29 @@ class ExperienceSource:
         episodes = min(episodes, len(self.episode_rewards))
         return sum(self.episode_rewards[-episodes:]) / episodes
 
+    def save(self) -> None:
+        name = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        policy = self.policy_name or str(self.policy)
+        name += f"_{policy}.csv"
+        path = os.path.join(DATAFRAME_BASEPATH, name)
+        time.sleep(2)
+
+        logger.info(f"Saving dataframe to {path}")
+        self.policy.env.save_dataframe(
+            path=path, include_true_mpp=self.include_true_mpp
+        )
+        logger.info(f"Saved to {path}")
+
 
 class ExperienceSourceEpisodes(ExperienceSource):
-    def __init__(self, policy: BasePolicy, episodes: int, render: bool = False):
-        super().__init__(policy=policy, render=render)
+    def __init__(
+        self,
+        policy: BasePolicy,
+        episodes: int,
+        render: bool = False,
+        pvenv_kwargs: Dict[str, str] = {},
+    ):
+        super().__init__(policy=policy, render=render, pvenv_kwargs=pvenv_kwargs)
 
         self.max_episodes = episodes
 
@@ -98,9 +139,14 @@ class ExperienceSourceEpisodes(ExperienceSource):
 
 class ExperienceSourceDiscounted(ExperienceSource):
     def __init__(
-        self, policy: BasePolicy, gamma: float, n_steps: int, render: bool = False
+        self,
+        policy: BasePolicy,
+        gamma: float,
+        n_steps: int,
+        render: bool = False,
+        pvenv_kwargs: Dict[str, str] = {},
     ):
-        super().__init__(policy=policy, render=render)
+        super().__init__(policy=policy, render=render, pvenv_kwargs=pvenv_kwargs)
 
         self.gamma = gamma
         self.n_steps = n_steps
@@ -151,8 +197,15 @@ class ExperienceSourceDiscountedSteps(ExperienceSourceDiscounted):
         n_steps: int,
         steps: int,
         render: bool = False,
+        pvenv_kwargs: Dict[str, str] = {},
     ):
-        super().__init__(policy=policy, gamma=gamma, n_steps=n_steps, render=render)
+        super().__init__(
+            policy=policy,
+            gamma=gamma,
+            n_steps=n_steps,
+            render=render,
+            pvenv_kwargs=pvenv_kwargs,
+        )
 
         self.steps = steps
 
@@ -168,8 +221,15 @@ class ExperienceSourceDiscountedEpisodes(ExperienceSourceDiscounted):
         n_steps: int,
         episodes: int,
         render: bool = False,
+        pvenv_kwargs: Dict[str, str] = {},
     ):
-        super().__init__(policy=policy, gamma=gamma, n_steps=n_steps, render=render)
+        super().__init__(
+            policy=policy,
+            gamma=gamma,
+            n_steps=n_steps,
+            render=render,
+            pvenv_kwargs=pvenv_kwargs,
+        )
 
         self.max_episodes = episodes
 

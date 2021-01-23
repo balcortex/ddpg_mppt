@@ -82,9 +82,9 @@ if __name__ == "__main__":
     # plt.plot(states)
     # plt.show()
 
-    noise = GaussianNoise(0, 0.5)
+    noise = GaussianNoise(0, 0.4)
     states = []
-    for i in range(800):
+    for i in range(100):
         states.append(noise.sample())
     import matplotlib.pyplot as plt
 

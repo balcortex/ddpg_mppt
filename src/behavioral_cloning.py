@@ -1,12 +1,16 @@
+import os
+from collections import namedtuple
+from typing import Any, Dict, Optional, Sequence
+
+import gym
 import torch
 import torch.nn as nn
-import gym
-
-from src.experience import ExperienceSourceDiscountedSteps, ExperienceDiscounted
-from typing import Dict, Optional, Any, Sequence
-from src.replay_buffer import ReplayBuffer, Experience
-from collections import namedtuple
 from tqdm import tqdm
+
+from src.experience import ExperienceDiscounted, ExperienceSourceDiscountedSteps
+from src.logger import logger
+from src.replay_buffer import Experience, ReplayBuffer
+from src.utils import efficiency, mse
 
 Tensor = torch.Tensor
 TrainingBatch = namedtuple(
@@ -56,38 +60,63 @@ class BehavioralCloning:
     def __init__(
         self,
         demo_exp_source: ExperienceSourceDiscountedSteps,
-        test_exp_sorce: ExperienceSourceDiscountedSteps,
-        actor: Actor,
+        val_po_exp_source: ExperienceSourceDiscountedSteps,
+        val_ddpg_exp_source: ExperienceSourceDiscountedSteps,
+        test_po_exp_source: ExperienceSourceDiscountedSteps,
+        test_ddpg_exp_source: ExperienceSourceDiscountedSteps,
+        actor: Optional[Actor] = None,
         demo_buffer_size: int = 10_000,
         demo_batch_size: int = 64,
         actor_lr: float = 1e-4,
         actor_l2: float = 0.0,
-        load_checkpoint: Optional[str] = None,
+        actor_ckp: Optional[str] = None,
     ):
         self.demo_exp_source = demo_exp_source
-        self.test_exp_sorce = test_exp_sorce
-        self.actor = actor
+        self.val_po_exp_source = val_po_exp_source
+        self.val_ddpg_exp_source = val_ddpg_exp_source
+        self.test_po_exp_source = test_po_exp_source
+        self.test_ddpg_exp_source = test_ddpg_exp_source
         self.demo_buffer = ReplayBuffer(capacity=demo_buffer_size)
         self.demo_buffer_size = demo_buffer_size
         self.demo_batch_size = demo_batch_size
 
-        if load_checkpoint:
-            self.load(load_checkpoint)
-
+        self.actor = actor or self.create_actor(self.demo_exp_source)
+        if actor_ckp:
+            self.load(actor_ckp)
         self.actor_optim = torch.optim.Adam(
             self.actor.parameters(), lr=actor_lr, weight_decay=actor_l2
         )
 
-    def learn(self, epochs: int, train_steps: int = 1, log_every: int = -1) -> None:
+        self._fill_buffers()
+        # The validation episode from P&O just needs to run once
+        self.val_po_exp_source.play_episode()
+        self.po_dc = self.val_po_exp_source.policy.env.history.duty_cycle
+
+    def learn(
+        self,
+        epochs: int,
+        val_every: int = 500,
+        train_steps: int = 1,
+        log_every: int = -1,
+    ) -> None:
         losses = {}
 
-        if len(self.demo_buffer) == 0:
-            self._fill_buffers()
+        error = 1e6
+        best_weights = self.actor.state_dict()
 
         for i in tqdm(range(1, epochs + 1)):
             if i % log_every == 0 and log_every > 0:
                 print()
                 print(f"{losses}")
+
+            if i % val_every == 0:
+                error_ = self.run_validation()
+                print(f"val error={error_}")
+                if error_ > error:
+                    self.actor.load_state_dict(best_weights)
+                    break
+                error = error_
+                best_weights = self.actor.state_dict()
 
             for j in range(train_steps):
                 batch_demo = self._prepare_training_batch(
@@ -95,12 +124,20 @@ class BehavioralCloning:
                 )
                 losses = self._train_net(batch_demo)
 
+        self.run_test(self.test_po_exp_source)
+        self.run_test(self.test_ddpg_exp_source)
+
+    def run_validation(self) -> float:
+        self.val_ddpg_exp_source.play_episode()
+        rl_dc = self.val_ddpg_exp_source.policy.env.history.duty_cycle
+        return mse(self.po_dc, rl_dc)
+
     def save(self, path: str) -> None:
         torch.save({"actor_state_dict": self.actor.state_dict()}, path)
 
     def load(self, path: str) -> None:
         checkpoint = torch.load(path)
-        print(f"Loaded from {path}")
+        logger.info(f"Loaded from {path}")
         self.actor.load_state_dict(checkpoint["actor_state_dict"])
         self.test_exp_sorce.policy.net = self.actor
 
@@ -181,3 +218,12 @@ class BehavioralCloning:
             **actor_kwargs,
         )
         return actor
+
+    @staticmethod
+    def run_test(exp_source: ExperienceSourceDiscountedSteps) -> float:
+        test_env = exp_source.policy.env
+        exp_source.play_episode()
+        p_real, *_ = test_env.pvarray.get_true_mpp(
+            test_env.history.g, test_env.history.amb_t
+        )
+        return efficiency(p_real, test_env.history.p)
