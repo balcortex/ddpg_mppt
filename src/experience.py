@@ -9,9 +9,6 @@ import time
 
 from src.logger import logger
 
-DATAFRAME_BASEPATH = os.path.join("data", "dataframes")
-
-
 Experience = collections.namedtuple(
     "Experience", ["state", "action", "reward", "last_state"]
 )
@@ -34,9 +31,12 @@ class ExperienceSource:
         self.save_dataframe = pvenv_kwargs.get("save_dataframe", False)
         self.include_true_mpp = pvenv_kwargs.get("include_true_mpp", False)
         self.policy_name = pvenv_kwargs.get("policy_name", None)
+        self.basepath = pvenv_kwargs.get("basepath", None)
 
         if self.policy_name:
             self.policy_name = self.policy_name + "_" + self.env.pvarray.model_name
+        if self.save_dataframe and self.basepath is None:
+            raise ValueError("Must provide a `basepath` to save the dataframe")
 
         self.reset()
 
@@ -111,7 +111,7 @@ class ExperienceSource:
         name = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         policy = self.policy_name or str(self.policy)
         name += f"_{policy}.csv"
-        path = os.path.join(DATAFRAME_BASEPATH, name)
+        path = os.path.join(self.basepath, name)
         time.sleep(2)
 
         logger.info(f"Saving dataframe to {path}")
@@ -174,7 +174,7 @@ class ExperienceSourceDiscounted(ExperienceSource):
             last_state=history[-1].last_state,
             reward=reward,
             discounted_reward=discounted_reward,
-            steps=step_idx + 1,
+            steps=step_idx + 1,  # type: ignore
         )
 
     def play_episode(self):

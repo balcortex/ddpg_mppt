@@ -96,6 +96,9 @@ class RewardPowerDeltaPower:
                 return history.p_norm[-1]
         return history.p[-1] + history.dp[-1] * 5
 
+    def __repr__(self):
+        return f"RewardPowerDeltaPower, norm={self.norm}"
+
 
 class RewardDeltaPowerVoltage:
     """
