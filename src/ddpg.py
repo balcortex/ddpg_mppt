@@ -87,6 +87,12 @@ class DDPGCritic(nn.Module):
         return self.output(x)
 
 
+def init_weights(m):
+    if type(m) == nn.Linear:
+        torch.nn.init.xavier_uniform(m.weight)
+        m.bias.data.fill_(0.01)
+
+
 def create_ddpg_actor_critic(
     env: gym.Env, actor_kwargs: Dict[Any, Any] = {}, critic_kwargs: Dict[Any, Any] = {}
 ) -> Tuple[nn.Module, nn.Module]:
@@ -100,6 +106,8 @@ def create_ddpg_actor_critic(
         act_size=env.action_space.shape[0],
         **critic_kwargs,
     )
+    actor.apply(init_weights)
+    critic.apply(init_weights)
     return actor, critic
 
 
@@ -145,9 +153,15 @@ class DDPGAgent:
 
         self._fill_buffer(num_experiences=batch_size)
 
-    def learn(self, epochs: int, train_steps: int = 1, log_every: int = -1) -> None:
+    def learn(
+        self,
+        epochs: int,
+        train_steps: int = 1,
+        collect_steps: int = 1,
+        log_every: int = -1,
+    ) -> None:
         losses = {}
-        for i in tqdm(range(1, epochs + 1)):
+        for i in tqdm(range(1, epochs + 1), desc="Training agent"):
             if i % log_every == 0 and log_every > 0:
                 print()
                 print(f"{losses}")
@@ -165,7 +179,8 @@ class DDPGAgent:
                 batch = self._prepare_training_batch()
                 losses = self._train_net(batch)
 
-            self._play_step()
+            for k in range(collect_steps):
+                self._play_step()
 
     def save(self, path: str) -> None:
         torch.save(
