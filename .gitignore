@@ -8,6 +8,11 @@ slprj/
 figs/
 dataframes/
 *.autosave
+weather2017.csv
+weather2018.csv
+weather2019.csv
+temp.py
+results.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

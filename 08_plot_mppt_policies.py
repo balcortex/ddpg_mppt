@@ -1,11 +1,12 @@
 # https://matplotlib.org/3.3.3/gallery/ticks_and_spines/date_concise_formatter.html
 
+import os
 from typing import Sequence, Union
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import pandas as pd
-import os
+from tqdm import tqdm
 
 from src.utils import efficiency
 
@@ -89,13 +90,16 @@ PAIRS = {
 class PlotHandler:
     def __init__(self, filepath: str):
         self.df = self.read_csv(filepath)
+        self.path = os.path.split(filepath)[0]
         self.name = os.path.splitext(os.path.split(filepath)[1])[0]
 
         self.locator = mdates.AutoDateLocator(minticks=3, maxticks=10)
         self.formatter = mdates.ConciseDateFormatter(self.locator)
 
     def plot(
-        self, y: Union[str, Sequence[str]], show: bool = True, save: bool = False
+        self,
+        y: Union[str, Sequence[str]],
+        save: str = "png",
     ) -> None:
         if isinstance(y, str):
             y = [y]
@@ -105,6 +109,7 @@ class PlotHandler:
             ax = plt.gca()
             ax.xaxis.set_major_locator(self.locator)
             ax.xaxis.set_major_formatter(self.formatter)
+            name = os.path.join(self.path, self.name + f"_{y_}.{save}")
 
             for pair in PAIRS[y_]:
                 plt.plot(
@@ -115,12 +120,9 @@ class PlotHandler:
                 plt.ylabel(LABELS[pair]["ylabel"], usetex=True)
             # plt.legend(frameon=False)
             plt.legend()
-            plt.show()
             if save:
-                f.savefig(
-                    os.path.join("figs", self.name + "_" + y_ + ".pdf"),
-                    bbox_inches="tight",
-                )
+                f.savefig(name, bbox_inches="tight")
+            plt.close()
 
     def calc_efficiency(self) -> float:
         p_max = self.df["PV Maximum Power"]
@@ -137,21 +139,22 @@ class PlotHandler:
         return df
 
 
-if __name__ == "__main__":
-    import os
-
-    basepath = r"data\dataframes"
-    files = [f for f in os.listdir(basepath) if f.endswith(".csv")]
+def plot_folder(y: Sequence[str] = ["p", "dc"], index: int = -1) -> None:
+    "Plot the results of the folder (zero-based index)"
+    basepath = os.path.join("data", "dataframes")
+    path = os.path.join("data", "dataframes", os.listdir(basepath)[index])
+    files = [f for f in os.listdir(path) if f.endswith(".csv")]
 
     eff_str = ""
-    for f in files:
-        ph = PlotHandler(os.path.join(basepath, f))
+    for f in tqdm(files, desc="Plotting"):
+        ph = PlotHandler(os.path.join(path, f))
         eff = ph.calc_efficiency()
         eff_str += f"{f}_eff_{eff}\n"
-        print(f)
-        print(f"Efficiency={eff}")
-        # ph.plot(("p", "v", "dc", "g", "t", "ct"), save=False)
-        ph.plot(("p", "v", "dc"), save=False)
+        ph.plot(y=y)
 
-    with open(os.path.join(basepath, "eff_results.txt"), "w") as f:
+    with open(os.path.join(path, "eff_results.txt"), "w") as f:
         f.write(eff_str)
+
+
+if __name__ == "__main__":
+    plot_folder(index=-2)

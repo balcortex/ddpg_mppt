@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 shell_handler = logging.StreamHandler()
 file_handler = logging.FileHandler(os.path.join(".", "debug.log"))
 
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.WARNING)
 shell_handler.setLevel(logging.INFO)
 file_handler.setLevel(logging.DEBUG)
 

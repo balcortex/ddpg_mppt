@@ -1,7 +1,7 @@
 import os
 from collections import namedtuple
 from functools import partial
-from typing import Dict, List, Union, Optional
+from typing import Any, Dict, List, Union, Optional
 
 import numpy as np
 import matlab.engine
@@ -138,12 +138,13 @@ class PVArray:
         ):
             g = round(g, float_precision)
             t = round(t, float_precision)
+            t_ = int(round(t))
 
-            key = f"{g},{t}"
+            key = f"{g},{t_}"
             if self.hist_mpp[key]:
                 result = PVSimResult(*self.hist_mpp[key])
             else:
-                result = self._get_true_mpp(g, t, ftol)
+                result = self._get_true_mpp(g, t_, ftol)
                 self.hist_mpp[key] = result
                 self._check_save()
                 # self._save_history(verbose=False, mpp=True)
@@ -194,6 +195,7 @@ class PVArray:
     def _init_history(self) -> None:
         if os.path.exists(self.ckp_path):
             self.hist = defaultdict(lambda: None, utils.load_dict(self.ckp_path))
+            # self.hist = self._drop_nones_in_dict(self.hist)
         else:
             logger.info(f"Creating new dictionary at {self.ckp_path}")
             self.hist = defaultdict(lambda: None)
@@ -205,6 +207,11 @@ class PVArray:
         else:
             logger.info(f"Creating new dictionary at {self.ckp_mpp_path}")
             self.hist_mpp = defaultdict(lambda: None)
+            # self.hist_mpp = self._drop_nones_in_dict(self.hist_mpp)
+
+    @staticmethod
+    def _drop_nones_in_dict(dic: Dict[Any, Any]) -> Dict[Any, Any]:
+        return {k: v for k, v in dic.items() if v is not None}
 
     def _check_save(self) -> None:
         if time.time() - self.time_elapsed >= self.save_every_seconds:
@@ -212,8 +219,12 @@ class PVArray:
             self.time_elapsed = time.time()
 
     def save(self, verbose: bool = True) -> None:
-        utils.save_dict(self.hist_mpp, self.ckp_mpp_path, verbose=verbose)
-        utils.save_dict(self.hist, self.ckp_path, verbose=verbose)
+        utils.save_dict(
+            self._drop_nones_in_dict(self.hist_mpp), self.ckp_mpp_path, verbose=verbose
+        )
+        utils.save_dict(
+            self._drop_nones_in_dict(self.hist), self.ckp_path, verbose=verbose
+        )
 
     def _get_true_mpp(
         self,

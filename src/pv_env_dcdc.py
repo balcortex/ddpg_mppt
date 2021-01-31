@@ -108,7 +108,7 @@ class PVEnv(PVEnvBase):
         day_index: int = 0,
     ) -> None:
         self.pvarray = pvarray
-        self.weather = [group[1] for group in weather_df.groupby(weather_df.index.day)]
+        self.weather = [group[1] for group in weather_df.groupby(weather_df.index.date)]
         self.states = states
         self.reward_fn = reward_fn
         self.dc0 = dc0
