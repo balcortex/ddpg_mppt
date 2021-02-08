@@ -4,9 +4,13 @@ from typing import Sequence
 import random
 import os
 from src.utils import read_weather_csv
+import time
 
 
 def clean_weather_file(filename: str):
+    plt.ion()
+    plt.show()
+
     df = read_weather_csv(f"{filename}.csv")
 
     # Cleaning
@@ -18,10 +22,15 @@ def clean_weather_file(filename: str):
     clean_day_index = []
     for df_day in df_list:
         if len(df_day) > 700:
-            df_day.plot(subplots=True, layout=(1, 2))
-            plt.show()
-            clean_day_index.append(input())
-            plt.close()
+            # df_day.plot(subplots=True, layout=(1, 2))
+            plt.plot(df_day["Irradiance"])
+            # plt.show()
+            plt.draw()
+            plt.pause(0.01)
+            # time.sleep(3)
+            # plt.close()
+            clean_day_index.append(input() or "0")
+            plt.clf()
         else:
             clean_day_index.append("0")
 
@@ -42,7 +51,7 @@ def split_train_val_test(
     test_pct: float = 0.1,
     filenames: Sequence[str] = ("weather2017_clean", "weather2018_clean"),
     shuffle: bool = True,
-    seed: int = 42,
+    seed: int = 44,
 ):
     df = pd.concat([read_weather_csv(f"{f}.csv", format=None) for f in filenames])
     df_day = [group[1] for group in df.groupby(df.index.date)]
@@ -75,5 +84,5 @@ def split_train_val_test(
 if __name__ == "__main__":
     # clean_weather_file("weather2017")
     # clean_weather_file("weather2018")
-    split_train_val_test()
+    split_train_val_test(val_pct=0.08, test_pct=0.05)
     # clean_weather_file("weather2019")

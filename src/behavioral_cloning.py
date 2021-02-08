@@ -177,11 +177,11 @@ class BehavioralCloning:
     ) -> TrainingBatch:
         "Get a training batch for networks weight update"
         batch = buffer.sample(batch_size=batch_size)
-        obs = torch.tensor(batch.observations, dtype=torch.float32)
-        actions = torch.tensor(batch.actions, dtype=torch.float32)
-        rewards = torch.tensor(batch.rewards, dtype=torch.float32)
-        dones = torch.tensor(batch.dones, dtype=torch.bool)
-        last_obs = torch.tensor(batch.new_observations, dtype=torch.float32)
+        obs = torch.tensor(batch.state, dtype=torch.float32)
+        actions = torch.tensor(batch.action, dtype=torch.float32)
+        rewards = torch.tensor(batch.reward, dtype=torch.float32)
+        dones = torch.tensor(batch.done, dtype=torch.bool)
+        last_obs = torch.tensor(batch.last_state, dtype=torch.float32)
 
         if norm_rewards:
             rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-6)
@@ -205,9 +205,7 @@ class BehavioralCloning:
             last_obs = discounted_exp.last_state
             done = False
 
-        exp = Experience(
-            obs=obs, action=action, reward=reward, done=done, new_obs=last_obs
-        )
+        exp = Experience(obs, action, reward, done, last_obs)
         buffer.append(experience=exp)
 
     @staticmethod

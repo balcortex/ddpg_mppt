@@ -8,7 +8,7 @@ from src.policies import DDPGPolicy, PerturbObservePolicyDCDC
 from src.pv_array_dcdc import PVArray
 from src.pv_env_dcdc import PVEnv
 from src.reward import RewardPowerDeltaPower
-from src.utils import mse, read_weather_csv, save_dict
+from src.utils import mse, read_weather_csv, save_dict, make_datetime_folder
 
 PV_PARAMS_PATH = os.path.join("parameters", "01_pvarray.json")
 PV_CKP_PATH = os.path.join("data", "02_pvarray_dcdc.json")
@@ -34,6 +34,8 @@ except NameError:
     pass
 engine = matlab.engine.connect_matlab()
 
+path = make_datetime_folder(os.path.join("data", "dataframes"))
+
 
 reward_fn = RewardPowerDeltaPower(norm=True)
 pvarray = PVArray.from_json(
@@ -41,26 +43,30 @@ pvarray = PVArray.from_json(
     engine=engine,
     model_name="pv_boost_avg_rload",
 )
-weather_df = read_weather_csv(WEATHER_TRAIN_PATH)
-weather_val_df = read_weather_csv(WEATHER_VAL_PATH)
-weather_test_df = read_weather_csv(WEATHER_TEST_PATH)
+# weather_df = read_weather_csv(WEATHER_TRAIN_PATH)
+# weather_val_df = read_weather_csv(WEATHER_VAL_PATH)
+# weather_test_df = read_weather_csv(WEATHER_TEST_PATH)
+weather_sim_df = read_weather_csv(WEATHER_SIM_PATH)
 demo_env = PVEnv(
     pvarray=pvarray,
-    weather_df=weather_df,
+    # weather_df=weather_df,
+    weather_df=weather_sim_df,
     states=STATES,
     reward_fn=reward_fn,
     dc0=DUTY_CYCLE_INITIAL,
 )
 val_env = PVEnv(
     pvarray=pvarray,
-    weather_df=weather_val_df,
+    # weather_df=weather_val_df,
+    weather_df=weather_sim_df,
     states=STATES,
     reward_fn=reward_fn,
     dc0=DUTY_CYCLE_INITIAL,
 )
 test_env = PVEnv(
     pvarray=pvarray,
-    weather_df=weather_test_df,
+    # weather_df=weather_test_df,
+    weather_df=weather_sim_df,
     states=STATES,
     reward_fn=reward_fn,
     dc0=DUTY_CYCLE_INITIAL,
@@ -90,6 +96,7 @@ val_po_exp_source = ExperienceSourceDiscountedSteps(
         "save_dataframe": True,
         "include_true_mpp": True,
         "policy_name": "po-val",
+        "basepath": path,
     },
 )
 val_ddpg_exp_source = ExperienceSourceDiscountedSteps(
@@ -101,6 +108,7 @@ val_ddpg_exp_source = ExperienceSourceDiscountedSteps(
         "save_dataframe": True,
         "include_true_mpp": True,
         "policy_name": "ddpg-val",
+        "basepath": path,
     },
 )
 test_po_exp_source = ExperienceSourceDiscountedSteps(
@@ -112,6 +120,7 @@ test_po_exp_source = ExperienceSourceDiscountedSteps(
         "save_dataframe": True,
         "include_true_mpp": True,
         "policy_name": "po-test",
+        "basepath": path,
     },
 )
 test_exp_source = ExperienceSourceDiscountedSteps(
@@ -123,6 +132,7 @@ test_exp_source = ExperienceSourceDiscountedSteps(
         "save_dataframe": True,
         "include_true_mpp": True,
         "policy_name": "ddpg_test",
+        "basepath": path,
     },
 )
 demo_exp_source = ExperienceSourceDiscountedSteps(
@@ -134,6 +144,7 @@ demo_exp_source = ExperienceSourceDiscountedSteps(
         "save_dataframe": True,
         "include_true_mpp": True,
         "policy_name": "po-demo",
+        "basepath": path,
     },
 )
 

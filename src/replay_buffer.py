@@ -1,15 +1,41 @@
 import collections
 import pickle
-from collections import namedtuple
-from typing import Deque, List, Tuple
+
+# from collections import namedtuple
+from typing import Deque, List, Tuple, NamedTuple, Union, Optional
 
 import numpy as np
 
-Experience = namedtuple("Experience", ["obs", "action", "reward", "done", "new_obs"])
-ExperienceBatch = namedtuple(
-    "ExperienceBatch",
-    ["observations", "actions", "rewards", "dones", "new_observations"],
-)
+# Experience = namedtuple("Experience", ["obs", "action", "reward", "done", "new_obs"])
+# ExperienceBatch = namedtuple(
+#     "ExperienceBatch",
+#     ["observations", "actions", "rewards", "dones", "new_observations"],
+# )
+
+
+class Experience(NamedTuple):
+    state: Union[float, int]
+    action: Union[float, int]
+    reward: Union[float, int]
+    done: bool
+    last_state: Optional[Union[float, int]]
+
+
+class ExperienceDiscounted(NamedTuple):
+    state: Union[float, int]
+    action: Union[float, int]
+    reward: Union[float, int]
+    last_state: Optional[Union[float, int]]
+    discounted_reward: Union[float, int]
+    steps: int
+
+
+class ExperienceBatch(NamedTuple):
+    state: np.array
+    action: np.array
+    reward: np.array
+    done: np.array
+    last_state: np.array
 
 
 class ReplayBuffer:
@@ -23,12 +49,16 @@ class ReplayBuffer:
     Numpy arrays
     """
 
-    def __init__(self, capacity: int):
+    def __init__(self, capacity: int, name: str = ""):
         assert isinstance(capacity, int)
+        self.name = name
         self.buffer: Deque[Experience] = collections.deque(maxlen=capacity)
 
     def __len__(self) -> int:
         return len(self.buffer)
+
+    def __repr__(self) -> str:
+        return f"ReplayBuffer{self.name}"
 
     def append(self, experience) -> None:
         self.buffer.append(experience)
@@ -82,11 +112,11 @@ if __name__ == "__main__":
 
     for disc_exp in next(exp_source):
         exp = Experience(
-            obs=disc_exp.state,
-            action=disc_exp.action,
-            reward=disc_exp.discounted_reward,
-            done=True if disc_exp.last_state is None else False,
-            new_obs=disc_exp.last_state,
+            disc_exp.state,
+            disc_exp.action,
+            disc_exp.discounted_reward,
+            True if disc_exp.last_state is None else False,
+            disc_exp.last_state,
         )
         buffer.append(exp)
 

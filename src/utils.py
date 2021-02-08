@@ -1,5 +1,7 @@
+import datetime
 import itertools
 import json
+import os
 from typing import Any, Dict, Generator, Optional, Sequence, Union
 
 import numpy as np
@@ -58,3 +60,10 @@ def grid_generator(
     "Perform permutation on the values (sequence) of a dictionary"
     keys, values = zip(*dic.items())
     return (dict(zip(keys, v)) for v in itertools.product(*values))
+
+
+def make_datetime_folder(basepath: str) -> str:
+    path = os.path.join(basepath, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    os.makedirs(path, exist_ok=True)
+
+    return path

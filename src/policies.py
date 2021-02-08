@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from abc import ABC, abstractmethod
 
-from src.pv_env import PVEnv
+from src.pv_env_dcdc import PVEnv
 from src.schedule import Schedule
 
 
@@ -16,7 +16,7 @@ class BasePolicy(ABC):
 
     def __init__(
         self,
-        env: gym.Env,
+        env: Union[gym.Env, PVEnv],
         noise: Optional[Noise],
         schedule: Schedule,
         decrease_noise: bool,

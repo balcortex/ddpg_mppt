@@ -113,6 +113,7 @@ class PVEnv(PVEnvBase):
         self.reward_fn = reward_fn
         self.dc0 = dc0
         self.day_idx = day_index - 1
+        self.done = True
 
         self.action_space = self._get_action_space()
         self.observation_space = self._get_observation_space()
@@ -124,14 +125,13 @@ class PVEnv(PVEnvBase):
 
         self.day_idx = (self.day_idx + 1) % len(self.weather)
 
-        # TODO delete if works
-        # self.day_idx += 1
-        # if self.day_idx == len(self.weather):
-        #     self.day_idx = 0
-
         dc = np.random.rand() if self.dc0 == None else self.dc0
 
         return self._store_step(dc)
+
+    def reset_day(self) -> None:
+        self.day_idx = -1
+        self.reset()
 
     def step(self, action: float) -> StepResult:
         if self.done:
@@ -207,7 +207,7 @@ class PVEnv(PVEnvBase):
         if show:
             plt.show()
         if save_path:
-            path = fname = save_path + "_p_" + f"{eff:.2f}.png"
+            path = save_path + "_p_" + f"{eff:.2f}.png"
             plt.savefig(path)
             logger.info(f"Saved to {path}")
         plt.clf()
@@ -388,7 +388,6 @@ if __name__ == "__main__":
     while True:
         action = env.action_space.sample()
         obs, reward, done, info = env.step(action)
-        # print(f"{obs=}")
 
         if done:
             break

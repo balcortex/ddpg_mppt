@@ -1,13 +1,15 @@
 import collections
-import gym
-from src.policies import BasePolicy
-import numpy as np
 import datetime
 import os
-from typing import Dict, Any
 import time
+from typing import Any, Dict, Union
+
+import gym
+import numpy as np
 
 from src.logger import logger
+from src.policies import BasePolicy
+from src.pv_env_dcdc import PVEnv
 
 Experience = collections.namedtuple(
     "Experience", ["state", "action", "reward", "last_state"]
@@ -26,7 +28,7 @@ class ExperienceSource:
         pvenv_kwargs: Dict[str, Any] = {},
     ):
         self.policy = policy
-        self.env = policy.env
+        self.env: Union[gym.env, PVEnv] = policy.env
         self.render = render
         self.save_dataframe = pvenv_kwargs.get("save_dataframe", False)
         self.include_true_mpp = pvenv_kwargs.get("include_true_mpp", False)
@@ -48,9 +50,6 @@ class ExperienceSource:
 
     def reset(self) -> None:
         "Reset the step and episode counter"
-        self.obs = self.env.reset()
-        self.done = False
-        self.info = {}
         self.step_counter = 0
         self.episode_counter = 0
         self.episode_reward = 0.0
@@ -58,10 +57,9 @@ class ExperienceSource:
 
     def play_step(self):
         self.step_counter += 1
-        if self.done:
+        if self.env.done:
             self.obs = self.env.reset()
             self.info = {}
-            self.done = False
         obs = self.obs
         action = self.policy(obs=[obs], info=self.info)
         new_obs, reward, done, self.info = self.env.step(action)
@@ -72,7 +70,6 @@ class ExperienceSource:
             self.episode_counter += 1
             self.episode_rewards.append(self.episode_reward)
             self.episode_reward = 0.0
-            self.done = True
             if self.save_dataframe:
                 self.save()
             return Experience(state=obs, action=action, reward=reward, last_state=None)
@@ -81,7 +78,6 @@ class ExperienceSource:
 
     def play_episode(self):
         ep_history = []
-        self.obs = self.env.reset()
 
         while True:
             experience = self.play_step()
@@ -92,6 +88,14 @@ class ExperienceSource:
 
     def play_episodes(self, episodes):
         return [self.play_episode() for _ in range(episodes)]
+
+    def play_all_episodes(self):
+        episodes = len(self.env.weather)
+        return self.play_episodes(episodes)
+
+    @property
+    def available_episodes(self) -> int:
+        return len(self.env.weather)
 
     @property
     def last_episode_reward(self) -> float:
@@ -179,7 +183,6 @@ class ExperienceSourceDiscounted(ExperienceSource):
 
     def play_episode(self):
         ep_history = []
-        self.obs = self.env.reset()
 
         while True:
             experience = self.play_n_steps()
@@ -239,6 +242,7 @@ class ExperienceSourceDiscountedEpisodes(ExperienceSourceDiscounted):
 
 if __name__ == "__main__":
     import gym
+
     from src.policies import RandomPolicy
 
     env = gym.make("Pendulum-v0")

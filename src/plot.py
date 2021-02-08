@@ -161,18 +161,24 @@ def plot_folder(y: Sequence[str] = ["p", "dc"], index: int = -1) -> str:
     return path
 
 
-def find_test_eff(path: str) -> float:
+def find_test_eff(path: str, agent_name: str = "agent-test") -> float:
     eff_path = os.path.join(path, "eff_results.txt")
 
+    eff = 0
+    days = 0
     with open(eff_path) as f:
         for line in f.read().split():
-            if "ddpg-test" in line:
-                return round(float(line.split("_")[-1]), 2)
+            if agent_name in line:
+                eff += round(float(line.split("_")[-1]), 2)
+                days += 1
 
-    return None
+    assert days != 0
+    return eff / days
 
 
-def sort_eff(path: str = "results.txt", save_path: str = "results_sorted.txt") -> None:
+def sort_eff(
+    path: str = "results.txt", save_path: str = "results_sorted.txt", average: int = 10
+) -> None:
 
     with open(path) as f:
         lines = f.read().split()
@@ -193,14 +199,14 @@ def sort_eff(path: str = "results.txt", save_path: str = "results_sorted.txt") -
             dic_num[k] = 0
         except:
             pass
-    for line in sorted_lines[:10]:
+    for line in sorted_lines[:average]:
         dir_ = line.split("_")[0]
         conf_path = os.path.join(dir_, "exp_conf.json")
         dic = load_dict(conf_path)
         for k in dic_num.keys():
             dic_num[k] += float(dic[k])
     for k in dic_num.keys():
-        dic_num[k] /= 10.0
+        dic_num[k] /= average
     with open(save_path, "a") as f:
         f.write("\n")
         for key, val in dic_num.items():

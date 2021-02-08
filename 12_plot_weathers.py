@@ -12,12 +12,12 @@ def plot(df: pd.DataFrame) -> None:
 
 
 if __name__ == "__main__":
-    print("Training")
-    df_train = read_weather_csv(
-        os.path.join("data", "weather_real_train.csv"),
-        format=None,
-    )
-    plot(df_train)
+    # print("Training")
+    # df_train = read_weather_csv(
+    #     os.path.join("data", "weather_real_train.csv"),
+    #     format=None,
+    # )
+    # plot(df_train)
     print("Validation")
     df_val = read_weather_csv(
         os.path.join("data", "weather_real_val.csv"),
