@@ -1,3 +1,4 @@
+import copy
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple, Union
 
@@ -8,7 +9,7 @@ from torch.optim import Adam
 from tqdm import tqdm
 
 from src import utils
-from src.experience import ExperienceSource
+from src.experience import ExperienceSource, ExperienceSourceDiscountedSteps
 from src.replay_buffer import Experience, ExperienceDiscounted, ReplayBuffer
 
 Tensor = torch.Tensor
@@ -90,6 +91,34 @@ class DDPGCritic(nn.Module):
         x = self.obs_input(obs)
         x = self.hidden(torch.cat([x, action], dim=1))
         return self.output(x)
+
+
+class TargetNet:
+    "Wrapper around model which provides copy of it instead of trained weights"
+
+    def __init__(self, model: torch.nn.Module):
+        self.model = model
+        self.target_model = copy.deepcopy(model)
+
+    def __call__(self, *args) -> Tensor:
+        return self.target_model(*args)
+
+    def __repr__(self) -> str:
+        return str(self.target_model)
+
+    def sync(self) -> None:
+        self.target_model.load_state_dict(self.model.state_dict())
+
+    def alpha_sync(self, alpha: float) -> None:
+        """
+        Blend params of target net with params from the model
+        :param alpha:
+        """
+        state = self.model.state_dict()
+        tgt_state = self.target_model.state_dict()
+        for k, v in state.items():
+            tgt_state[k] = tgt_state[k] * alpha + (1 - alpha) * v
+        self.target_model.load_state_dict(tgt_state)
 
 
 def init_weights_xavier_uniform(module: nn.Module) -> None:
@@ -242,7 +271,6 @@ class BCAgent(Agent):
         self,
         demo_train_source: ExperienceSource,
         demo_val_source: ExperienceSource,
-        demo_test_source: ExperienceSource,
         agent_val_source: ExperienceSource,
         agent_test_source: ExperienceSource,
         actor: DDPGActor,
@@ -253,7 +281,6 @@ class BCAgent(Agent):
     ):
         self.demo_train_source = demo_train_source
         self.demo_val_source = demo_val_source
-        self.demo_test_source = demo_test_source
         self.agent_val_source = agent_val_source
         self.agent_test_source = agent_test_source
         self.actor = actor
@@ -328,13 +355,167 @@ class BCAgent(Agent):
 
 
 class DDPGAgent(Agent):
-    def __init__(self):
-        pass
+    def __init__(
+        self,
+        collect_exp_source: ExperienceSource,
+        agent_test_source: ExperienceSource,
+        actor: DDPGActor,
+        critic: DDPGCritic,
+        buffer_size: int = 10_000,
+        batch_size: int = 64,
+        actor_lr: float = 1e-4,
+        critic_lr: float = 1e-3,
+        actor_l2: float = 0.0,
+        critic_l2: float = 0.0,
+        tau: float = 1e-3,
+        norm_rewards: bool = False,
+    ):
+        self.collect_exp_source = collect_exp_source
+        self.agent_test_source = agent_test_source
+        self.actor = actor
+        self.critic = critic
+        # self.buffer_size = buffer_size
+        self.batch_size = batch_size
+        self.tau = tau
+        self.norm_rewards = norm_rewards
+
+        self.gamma = self.collect_exp_source.gamma
+        self.n_steps = self.collect_exp_source.n_steps
+
+        self.buffer = ReplayBuffer(capacity=buffer_size)
+        self.actor_optim = Adam(
+            self.actor.parameters(), lr=actor_lr, weight_decay=actor_l2
+        )
+        self.critic_optim = Adam(
+            self.critic.parameters(), lr=critic_lr, weight_decay=critic_l2
+        )
+        self.actor_target = TargetNet(self.actor)
+        self.critic_target = TargetNet(self.critic)
+        self.actor_target.sync()
+        self.critic_target.sync()
+
+        self.fill_buffers()
+
+    def _collect_steps(self, steps: int) -> None:
+        for _ in range(steps):
+            exp = next(self.collect_exp_source)[0]
+            self._append_to_buffer(self.buffer, exp)
+
+    def _early_stoping(self) -> bool:
+        _ = self.tau
+        return False
+
+    def _train_net(self, train_steps: int = 1) -> None:
+        for _ in range(train_steps):
+            batch = Agent._prepare_batch(
+                self.buffer, self.batch_size, norm_rewards=self.norm_rewards
+            )
+            # Critic training
+            pred_last_action = self.actor_target(batch.last_state)
+            q_last = self.critic_target(batch.last_state, pred_last_action).squeeze(-1)
+            q_last[batch.done] = 0.0  # Mask the value of terminal states
+            q_ref = batch.reward + q_last * self.gamma ** self.n_steps
+            q_pred = self.critic(batch.state, batch.action).squeeze(-1)
+            # .detach() to stop gradient propogation for q_ref
+            critic_loss = torch.nn.functional.mse_loss(q_ref.detach(), q_pred)
+            self.critic_optim.zero_grad()
+            critic_loss.backward()
+            self.critic_optim.step()
+
+            # Actor trainig
+            act_pred = self.actor(batch.state)
+            actor_loss = -self.critic(batch.state, act_pred).mean()
+            self.actor_optim.zero_grad()
+            actor_loss.backward()
+            self.actor_optim.step()
+
+            self.actor_target.alpha_sync(self.tau)
+            self.critic_target.alpha_sync(self.tau)
+
+    def fill_buffers(self) -> None:
+        Agent._fill_buffer_steps(
+            exp_source=self.collect_exp_source,
+            buffer=self.buffer,
+            num_experiences=self.batch_size,
+        )
+
+    def state_dict(self) -> Dict[str, Any]:
+        dic = {
+            "actor_state_dict": self.actor.state_dict(),
+            "critic_state_dict": self.critic.state_dict(),
+        }
+        return dic
+
+    def load_state_dict(self, dic: Dict[str, Any]) -> None:
+        self.actor.load_state_dict(dic["actor_state_dict"])
+        self.critic.load_state_dict(dic["actor_state_dict"])
+        self.agent_val_source.policy.net = self.actor
+        self.agent_test_source.policy.net = self.actor
+        self.actor_target.sync()
+        self.critic_target.sync()
 
 
-class BCDDPGAgent(Agent):
-    def __init__(self):
-        pass
+class DDPGWarmStartAgent(DDPGAgent):
+    def __init__(
+        self,
+        # bc
+        demo_train_source: ExperienceSource,
+        demo_val_source: ExperienceSource,
+        agent_val_source: ExperienceSource,
+        agent_test_source: ExperienceSource,
+        collect_exp_source: ExperienceSource,
+        actor: DDPGActor,
+        critic: DDPGCritic,
+        demo_buffer_size: int = 50_000,
+        demo_batch_size: int = 64,
+        demo_actor_lr: float = 1e-4,
+        demo_actor_l2: float = 1e-2,
+        demo_epochs: int = 10_000,
+        demo_val_every_steps: int = 500,
+        buffer_size: int = 10_000,
+        batch_size: int = 64,
+        actor_lr: float = 1e-4,
+        critic_lr: float = 1e-3,
+        actor_l2: float = 0.0,
+        critic_l2: float = 0.0,
+        tau: float = 1e-3,
+        norm_rewards: bool = False,
+    ):
+
+        self.actor = actor
+        self.bc_agent = BCAgent(
+            demo_train_source=demo_train_source,
+            demo_val_source=demo_val_source,
+            agent_val_source=agent_val_source,
+            agent_test_source=agent_test_source,
+            actor=self.actor,
+            demo_buffer_size=demo_buffer_size,
+            demo_batch_size=demo_batch_size,
+            actor_lr=demo_actor_lr,
+            actor_l2=demo_actor_l2,
+        )
+        self.bc_agent.learn(epochs=demo_epochs, val_every=demo_val_every_steps)
+
+        super().__init__(
+            collect_exp_source=collect_exp_source,
+            agent_test_source=agent_test_source,
+            actor=self.actor,
+            critic=critic,
+            buffer_size=buffer_size,
+            batch_size=batch_size,
+            actor_lr=actor_lr,
+            critic_lr=critic_lr,
+            actor_l2=actor_l2,
+            critic_l2=critic_l2,
+            tau=tau,
+            norm_rewards=norm_rewards,
+        )
+
+    def load_actor_weights(self, dic: Dict[str, Any]) -> None:
+        self.actor.load_state_dict(dic)
+        self.agent_val_source.policy.net = self.actor
+        self.agent_test_source.policy.net = self.actor
+        self.actor_target.sync()
 
 
 if __name__ == "__main__":
