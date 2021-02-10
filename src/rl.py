@@ -394,6 +394,9 @@ class DDPGAgent(Agent):
         self.actor_target.sync()
         self.critic_target.sync()
 
+        self._init()
+
+    def _init(self) -> None:
         self.fill_buffers()
 
     def _collect_steps(self, steps: int) -> None:
@@ -405,10 +408,35 @@ class DDPGAgent(Agent):
         _ = self.tau
         return False
 
-    def _train_net(self, train_steps: int = 1) -> None:
-        for _ in range(train_steps):
+    def _train_net(
+        self,
+        train_steps: int = 1,
+        buffer: Optional[ReplayBuffer] = None,
+        batch_size: Optional[int] = None,
+        show_prog_bar: bool = False,
+    ) -> None:
+        buffer = buffer or self.buffer
+        batch_size = batch_size or self.batch_size
+        for _ in tqdm(
+            range(train_steps), desc="Training Actor/Critic", disable=not show_prog_bar
+        ):
+            self._train_critic(train_steps=1, buffer=buffer, batch_size=batch_size)
+            self._train_actor(train_steps=1, buffer=buffer, batch_size=batch_size)
+
+    def _train_critic(
+        self,
+        train_steps: int = 1,
+        buffer: Optional[ReplayBuffer] = None,
+        batch_size: Optional[int] = None,
+        show_prog_bar: bool = False,
+    ) -> None:
+        buffer = buffer or self.buffer
+        batch_size = batch_size or self.batch_size
+        for _ in tqdm(
+            range(train_steps), desc="Training Critic", disable=not show_prog_bar
+        ):
             batch = Agent._prepare_batch(
-                self.buffer, self.batch_size, norm_rewards=self.norm_rewards
+                buffer, batch_size, norm_rewards=self.norm_rewards
             )
             # Critic training
             pred_last_action = self.actor_target(batch.last_state)
@@ -418,19 +446,38 @@ class DDPGAgent(Agent):
             q_pred = self.critic(batch.state, batch.action).squeeze(-1)
             # .detach() to stop gradient propogation for q_ref
             critic_loss = torch.nn.functional.mse_loss(q_ref.detach(), q_pred)
+
             self.critic_optim.zero_grad()
             critic_loss.backward()
             self.critic_optim.step()
 
+            self.critic_target.alpha_sync(self.tau)
+            self.actor_target.alpha_sync(self.tau)
+
+    def _train_actor(
+        self,
+        train_steps: int = 1,
+        buffer: Optional[ReplayBuffer] = None,
+        batch_size: Optional[int] = None,
+        show_prog_bar: bool = False,
+    ) -> None:
+        buffer = buffer or self.buffer
+        batch_size = batch_size or self.batch_size
+        for _ in tqdm(
+            range(train_steps), desc="Training Actor", disable=not show_prog_bar
+        ):
+            batch = Agent._prepare_batch(
+                buffer, batch_size, norm_rewards=self.norm_rewards
+            )
             # Actor trainig
             act_pred = self.actor(batch.state)
             actor_loss = -self.critic(batch.state, act_pred).mean()
+
             self.actor_optim.zero_grad()
             actor_loss.backward()
             self.actor_optim.step()
 
             self.actor_target.alpha_sync(self.tau)
-            self.critic_target.alpha_sync(self.tau)
 
     def fill_buffers(self) -> None:
         Agent._fill_buffer_steps(
@@ -458,7 +505,6 @@ class DDPGAgent(Agent):
 class DDPGWarmStartAgent(DDPGAgent):
     def __init__(
         self,
-        # bc
         demo_train_source: ExperienceSource,
         demo_val_source: ExperienceSource,
         agent_val_source: ExperienceSource,
@@ -480,9 +526,12 @@ class DDPGWarmStartAgent(DDPGAgent):
         critic_l2: float = 0.0,
         tau: float = 1e-3,
         norm_rewards: bool = False,
+        critic_pretrain_steps: int = 1000,
     ):
 
         self.actor = actor
+        self.critic_pretrain_steps = critic_pretrain_steps
+
         self.bc_agent = BCAgent(
             demo_train_source=demo_train_source,
             demo_val_source=demo_val_source,
@@ -495,6 +544,8 @@ class DDPGWarmStartAgent(DDPGAgent):
             actor_l2=demo_actor_l2,
         )
         self.bc_agent.learn(epochs=demo_epochs, val_every=demo_val_every_steps)
+        self.demo_batch_size = demo_batch_size
+        self.demo_buffer = self.bc_agent.demo_buffer
 
         super().__init__(
             collect_exp_source=collect_exp_source,
@@ -511,11 +562,14 @@ class DDPGWarmStartAgent(DDPGAgent):
             norm_rewards=norm_rewards,
         )
 
-    def load_actor_weights(self, dic: Dict[str, Any]) -> None:
-        self.actor.load_state_dict(dic)
-        self.agent_val_source.policy.net = self.actor
-        self.agent_test_source.policy.net = self.actor
-        self.actor_target.sync()
+    def _init(self) -> None:
+        self._train_critic(
+            train_steps=self.critic_pretrain_steps,
+            buffer=self.demo_buffer,
+            batch_size=self.demo_batch_size,
+            show_prog_bar=True,
+        )
+        self.fill_buffers()
 
 
 if __name__ == "__main__":

@@ -386,12 +386,6 @@ class DDPGMPPT(RLMPPT):
 class DPPGWarmStartMPPT(RLMPPT):
     def __init__(
         self,
-        epochs: int,
-        gamma: float,
-        n_steps: int,
-        use_real_weather: bool,
-        model_name: str,
-        self,
         demo_epochs: int,
         demo_buffer_size: int,
         demo_batch_size: int,
@@ -413,9 +407,30 @@ class DPPGWarmStartMPPT(RLMPPT):
         noise_std: float,
         noise_steps: float,
         norm_rewards: bool,
+        decrease_noise: bool,
+        critic_pretrain_steps: int,
         model_name: str = "pv_boost_avg_rload",
     ):
         self._locals = locals()
+        self.demo_epochs = demo_epochs
+        self.demo_buffer_size = demo_buffer_size
+        self.demo_batch_size = demo_batch_size
+        self.demo_actor_lr = demo_actor_lr
+        self.demo_actor_l2 = demo_actor_l2
+        self.demo_val_every_steps = demo_val_every_steps
+        self.buffer_size = buffer_size
+        self.batch_size = batch_size
+        self.actor_lr = actor_lr
+        self.actor_l2 = actor_l2
+        self.critic_lr = critic_lr
+        self.critic_l2 = critic_l2
+        self.tau = tau
+        self.noise_mean = noise_mean
+        self.noise_std = noise_std
+        self.noise_steps = noise_steps
+        self.norm_rewards = norm_rewards
+        self.decrease_noise = decrease_noise
+        self.critic_pretrain_steps = critic_pretrain_steps
 
         super().__init__(
             epochs=epochs,
@@ -424,37 +439,6 @@ class DPPGWarmStartMPPT(RLMPPT):
             use_real_weather=use_real_weather,
             model_name=model_name,
         )
-
-    # self.bcagent = BCMPPT(
-    #     epochs=demo_epochs,
-    #     n_steps=n_steps,
-    #     use_real_weather=use_real_weather,
-    #     demo_buffer_size=demo_buffer_size,
-    #     demo_batch_size=demo_batch_size,
-    #     actor_lr=demo_actor_lr,
-    #     actor_l2=demo_actor_l2,
-    #     model_name=model_name,
-    # )
-    # self.bcagent.learn(val_every=demo_val_every_steps)
-
-    # super().__init__(
-    #     epochs,
-    #     n_steps,
-    #     gamma,
-    #     use_real_weather,
-    #     buffer_size,
-    #     batch_size,
-    #     actor_lr,
-    #     actor_l2,
-    #     critic_lr,
-    #     critic_l2,
-    #     tau,
-    #     noise_mean,
-    #     noise_std,
-    #     noise_steps,
-    #     norm_rewards,
-    #     model_name=model_name,
-    # )
 
     def _get_conf_dict(self) -> Dict[str, Any]:
         "Return the experiment configuration (to save to a file later)"
@@ -468,8 +452,64 @@ class DPPGWarmStartMPPT(RLMPPT):
         "Return the agent source for the test environment"
         return self.agent.agent_test_source
 
-    def _get_agent(self) -> rl.DDPGAgent:
-        return super()._get_agent(actor=self.bcagent.agent.actor)
+    def _get_agent(self) -> rl.DDPGWarmStartAgent:
+        "Return the agent to be used"
+        trn_env, val_env, tst_env = self._get_envs()
+        actor, critic = rl.create_ddpg_actor_critic(trn_env)
+        demo_collect_policy = PerturbObservePolicyDCDC(env=trn_env, v_step=DC_STEP)
+        demo_val_policy = PerturbObservePolicyDCDC(env=val_env, v_step=DC_STEP)
+        demo_test_policy = PerturbObservePolicyDCDC(env=tst_env, v_step=DC_STEP)
+        agent_collect_policy = DDPGPolicy(
+            env=trn_env,
+            net=actor,
+            noise=GaussianNoise(self.noise_mean, self.noise_std),
+            schedule=LinearSchedule(max_steps=self.noise_steps),
+            decrease_noise=self.decrease_noise,
+        )
+        agent_val_policy = DDPGPolicy(env=val_env, net=actor)
+        agent_test_policy = DDPGPolicy(env=tst_env, net=actor)
+
+        demo_collect_source = self._create_exp_source(
+            demo_collect_policy, "po-expert-collect"
+        )
+        demo_val_source = self._create_exp_source(demo_val_policy, "po-expert-val")
+        self.expert_test_source = self._create_exp_source(
+            demo_test_policy, "po-expert-test"
+        )
+        collect_source = self._create_exp_source(
+            agent_collect_policy, "ddpg-agent-collect"
+        )
+        agent_val_source = self._create_exp_source(agent_val_policy, "ddpg-agent-val")
+        agent_test_source = self._create_exp_source(
+            agent_test_policy, "ddpg-agent-test"
+        )
+
+        agent = rl.DDPGWarmStartAgent(
+            demo_train_source=demo_collect_source,
+            demo_val_source=demo_val_source,
+            agent_val_source=agent_val_source,
+            agent_test_source=agent_test_source,
+            collect_exp_source=collect_source,
+            actor=actor,
+            critic=critic,
+            demo_buffer_size=self.demo_buffer_size,
+            demo_batch_size=self.demo_batch_size,
+            demo_actor_lr=self.demo_actor_lr,
+            demo_actor_l2=self.demo_actor_l2,
+            demo_epochs=self.demo_epochs,
+            demo_val_every_steps=self.demo_val_every_steps,
+            buffer_size=self.buffer_size,
+            batch_size=self.batch_size,
+            actor_lr=self.actor_lr,
+            critic_lr=self.critic_lr,
+            actor_l2=self.actor_l2,
+            critic_l2=self.critic_l2,
+            tau=self.tau,
+            norm_rewards=self.norm_rewards,
+            critic_pretrain_steps=self.critic_pretrain_steps,
+        )
+
+        return agent
 
 
 def main_bc():
@@ -484,7 +524,7 @@ def main_bc():
         "actor_l2": [1e-4],
     }
 
-    for agent in BCMPPT.from_grid(grid, repeat=50):
+    for agent in BCMPPT.from_grid(grid, repeat=1):
         agent.learn(val_every=500)
         agent.export_results()
 
@@ -499,7 +539,7 @@ def main_ddpg():
         "use_real_weather": [True],
         # "use_real_weather": [False],
         "buffer_size": [50_000],
-        "batch_size": [64, 128],
+        "batch_size": [64, 128, 512],
         "actor_lr": [1e-3],
         "actor_l2": [1e-3],
         "critic_lr": [1e-3],
@@ -511,7 +551,7 @@ def main_ddpg():
         "norm_rewards": [False],
     }
 
-    for agent in DDPGMPPT.from_grid(grid, repeat=50):
+    for agent in DDPGMPPT.from_grid(grid, repeat=5):
         agent.learn(val_every=500)
         agent.export_results()
 
@@ -526,25 +566,53 @@ def main_ddpg_warm_start():
         "demo_actor_lr": [1e-2],
         "demo_actor_l2": [1e-4],
         "demo_val_every_steps": [500],
-        "epochs": [20_000],
+        "epochs": [1_000],
         "n_steps": [1],
         "gamma": [0.1],
         # "use_real_weather": [True],
         "use_real_weather": [False],
         "buffer_size": [50_000],
-        "batch_size": [64, 128],
+        "batch_size": [64],
         "actor_lr": [1e-3],
         "actor_l2": [1e-3],
-        "critic_lr": [1e-3],
-        "critic_l2": [1e-5],
+        "critic_lr": [1e-2],
+        "critic_l2": [1e-4],
         "tau": [1e-3],
         "noise_mean": [0.0],
-        "noise_std": [0.01],
+        "noise_std": [0.001],
         "noise_steps": [5000],
         "norm_rewards": [False],
+        "decrease_noise": [False],
+        "critic_pretrain_steps": [1000, 5000, 10_000, 20_000],
     }
+    # grid = {
+    #     "demo_epochs": [100_000],
+    #     "demo_buffer_size": [5_000],
+    #     "demo_batch_size": [512],
+    #     "demo_actor_lr": [1e-2],
+    #     "demo_actor_l2": [1e-4],
+    #     "demo_val_every_steps": [500],
+    #     "epochs": [1_000],
+    #     "n_steps": [1],
+    #     "gamma": [0.1],
+    #     # "use_real_weather": [True],
+    #     "use_real_weather": [False],
+    #     "buffer_size": [50_000],
+    #     "batch_size": [64],
+    #     "actor_lr": [1e-3],
+    #     "actor_l2": [1e-3],
+    #     "critic_lr": [1e-3],
+    #     "critic_l2": [1e-5],
+    #     "tau": [1e-3],
+    #     "noise_mean": [0.0],
+    #     "noise_std": [0.001],
+    #     "noise_steps": [5000],
+    #     "norm_rewards": [False],
+    #     "decrease_noise": [False],
+    #     "critic_pretrain_steps": [1000],
+    # }
 
-    for agent in DPPGWarmStartMPPT.from_grid(grid, repeat=50):
+    for agent in DPPGWarmStartMPPT.from_grid(grid, repeat=1):
         agent.learn(val_every=500)
         agent.export_results()
 
@@ -557,6 +625,12 @@ if __name__ == "__main__":
     except NameError:
         pass
     ENGINE = matlab.engine.connect_matlab()
+
+    try:
+        os.remove("results.txt")
+        os.remove("results_sorted.txt")
+    except FileNotFoundError:
+        pass
 
     # main_bc()
     # main_ddpg()

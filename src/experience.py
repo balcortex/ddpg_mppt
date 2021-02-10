@@ -34,6 +34,7 @@ class ExperienceSource:
         self.include_true_mpp = pvenv_kwargs.get("include_true_mpp", False)
         self.policy_name = pvenv_kwargs.get("policy_name", None)
         self.basepath = pvenv_kwargs.get("basepath", None)
+        self.obs = None
 
         if self.policy_name:
             self.policy_name = self.policy_name + "_" + self.env.pvarray.model_name
@@ -57,7 +58,7 @@ class ExperienceSource:
 
     def play_step(self):
         self.step_counter += 1
-        if self.env.done:
+        if self.env.done or self.obs is None:
             self.obs = self.env.reset()
             self.info = {}
         obs = self.obs
