@@ -2,15 +2,21 @@ import copy
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple, Union
 
+import sys
 import gym
 import torch
 import torch.nn as nn
 from torch.optim import Adam
+from torch.nn import functional as F
 from tqdm import tqdm
 
 from src import utils
 from src.experience import ExperienceSource, ExperienceSourceDiscountedSteps
-from src.replay_buffer import Experience, ExperienceDiscounted, ReplayBuffer
+from src.replay_buffer import (
+    Experience,
+    ExperienceDiscounted,
+    ReplayBuffer,
+)
 
 Tensor = torch.Tensor
 
@@ -172,7 +178,7 @@ class Agent(ABC):
 
     def _early_stoping(self) -> bool:
         "Whether to stop the training based on the validation error"
-        raise NotImplementedError
+        return False
 
     def save_state_to_path(self, path: str) -> None:
         "Save the network state and other agent's states"
@@ -404,10 +410,6 @@ class DDPGAgent(Agent):
             exp = next(self.collect_exp_source)[0]
             self._append_to_buffer(self.buffer, exp)
 
-    def _early_stoping(self) -> bool:
-        _ = self.tau
-        return False
-
     def _train_net(
         self,
         train_steps: int = 1,
@@ -563,13 +565,161 @@ class DDPGWarmStartAgent(DDPGAgent):
         )
 
     def _init(self) -> None:
+        self.fill_buffers()
         self._train_critic(
             train_steps=self.critic_pretrain_steps,
-            buffer=self.demo_buffer,
-            batch_size=self.demo_batch_size,
+            buffer=self.buffer,
+            batch_size=self.batch_size,
             show_prog_bar=True,
         )
+
+
+class DDPGCoLAgent(Agent):
+    def __init__(
+        self,
+        actor: DDPGActor,
+        critic: DDPGCritic,
+        demo_source: ExperienceSource,
+        collect_source: ExperienceSource,
+        actor_lr: float = 1e-3,
+        actor_l2: float = 1e-4,
+        critic_lr: float = 1e-3,
+        critic_l2: float = 1e-4,
+        lambda_q1: float = 1e-1,
+        lambda_bc: float = 1e-1,
+        lambda_a: float = 1e-1,
+        tau: float = 1e-3,
+        demo_buffer_size: int = 5_000,
+        buffer_size: int = 50_000,
+        batch_size: int = 64,
+        pretrain_steps: int = 1000,
+        norm_rewards: bool = False,
+    ):
+        self.demo_source = demo_source
+        self.collect_source = collect_source
+        self.actor = actor
+        self.critic = critic
+        self.demo_buffer_size = demo_buffer_size
+        self.lambda_q1 = lambda_q1
+        self.lambda_bc = lambda_bc
+        self.lambda_a = lambda_a
+        self.tau = tau
+        self.batch_size = batch_size
+        self.norm_rewards = norm_rewards
+
+        self.gamma = self.collect_source.gamma
+        self.n_steps = self.collect_source.n_steps
+
+        self.actor_optim = Adam(actor.parameters(), lr=actor_lr, weight_decay=actor_l2)
+        self.critic_optim = Adam(
+            critic.parameters(), lr=critic_lr, weight_decay=critic_l2
+        )
+
+        self.demo_buffer = ReplayBuffer(demo_buffer_size)
+        self.buffer = ReplayBuffer(buffer_size)
+        self.actor_target = TargetNet(actor)
+        self.critic_target = TargetNet(critic)
+        self.actor_target.sync()
+        self.critic_target.sync()
+
         self.fill_buffers()
+        self._train_net(train_steps=pretrain_steps, show_prog_bar=True, pre_train=True)
+        self._fill_buffer_steps(self.collect_source, self.buffer, self.batch_size)
+
+    def _train_net(
+        self,
+        train_steps: int = 1,
+        show_prog_bar: bool = False,
+        pre_train: bool = False,
+    ) -> None:
+        "Train the agents' networks"
+        for _ in tqdm(range(train_steps), desc="Training", disable=not show_prog_bar):
+            batch = None
+            if pre_train:
+                batch = Agent._prepare_batch(
+                    self.demo_buffer,
+                    self.batch_size,
+                    norm_rewards=self.norm_rewards,
+                )
+            else:
+                demo_batch = Agent._prepare_batch(
+                    self.demo_buffer,
+                    int(0.25 * self.batch_size),
+                    norm_rewards=self.norm_rewards,
+                )
+                agent_batch = Agent._prepare_batch(
+                    self.buffer,
+                    int(0.75 * self.batch_size),
+                    norm_rewards=self.norm_rewards,
+                )
+                batch = self._merge_tensor_batches(demo_batch, agent_batch)
+
+            pred_last_action = self.actor_target(batch.last_state)
+            q_last = self.critic_target(batch.last_state, pred_last_action).squeeze(-1)
+            q_last[batch.done] = 0.0  # Mask the value of terminal states
+            q_ref = batch.reward + q_last * self.gamma ** self.n_steps
+            q_pred = self.critic(batch.state, batch.action).squeeze(-1)
+            # .detach() to stop gradient propogation for q_ref
+            q1_loss = F.mse_loss(q_ref.detach(), q_pred)
+
+            critic_loss = q1_loss
+            self.critic_optim.zero_grad()
+            critic_loss.backward()
+            self.critic_optim.step()
+
+            bc_loss = F.mse_loss(
+                self.actor(batch.state).squeeze(-1), batch.action.squeeze(-1)
+            )
+            a_loss = -self.critic(batch.state, self.actor(batch.state)).mean()
+
+            actor_loss = bc_loss + a_loss
+            self.actor_optim.zero_grad()
+            actor_loss.backward()
+            self.actor_optim.step()
+
+            self.critic_target.alpha_sync(self.tau)
+            self.actor_target.alpha_sync(self.tau)
+
+    @staticmethod
+    def _merge_tensor_batches(
+        a: ExperienceTensorBatch, b: ExperienceTensorBatch
+    ) -> ExperienceTensorBatch:
+        return ExperienceTensorBatch(*(torch.cat((a_, b_)) for (a_, b_) in zip(a, b)))
+
+    def _bc_loss(self, batch: ExperienceTensorBatch) -> Tensor:
+        return F.mse_loss(self.actor(batch.state).squeeze(-1), batch.action.squeeze(-1))
+
+    def _critic_loss(self, batch: ExperienceTensorBatch) -> Tensor:
+        pred_last_action = self.actor_target(batch.last_state)
+        q_last = self.critic_target(batch.last_state, pred_last_action).squeeze(-1)
+        q_last[batch.done] = 0.0  # Mask the value of terminal states
+        q_ref = batch.reward + q_last * self.gamma ** self.n_steps
+        q_pred = self.critic(batch.state, batch.action).squeeze(-1)
+        # .detach() to stop gradient propogation for q_ref
+        return F.mse_loss(q_ref.detach(), q_pred)
+
+    def _actor_loss(self, batch: ExperienceTensorBatch) -> Tensor:
+        act_pred = self.actor(batch.state)
+        return -self.critic(batch.state, act_pred).mean()
+
+    def fill_buffers(self) -> None:
+        "Fill the Replay Buffers"
+        self._fill_buffer_steps(
+            self.demo_source, self.demo_buffer, self.demo_buffer_size
+        )
+
+    def state_dict(self) -> Dict[str, Any]:
+        "Dictionary containing the agent's state"
+        pass
+
+    def load_state_dict(self, dic: Dict[str, Any]) -> None:
+        "Replace the agent's current states with the states in the dict"
+        pass
+
+    def _collect_steps(self, steps: int) -> None:
+        for _ in range(steps):
+            exp = next(self.collect_source)[0]
+            self._append_to_buffer(self.buffer, exp)
 
 
 if __name__ == "__main__":

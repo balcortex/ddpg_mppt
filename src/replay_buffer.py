@@ -1,5 +1,6 @@
 import collections
 import pickle
+from src.experience import ExperienceSource
 
 # from collections import namedtuple
 from typing import Deque, List, Tuple, NamedTuple, Union, Optional
@@ -94,6 +95,10 @@ class ReplayBuffer:
         return buffer
 
 
+# def merge_batches(a: ExperienceBatch, b: ExperienceBatch):
+#     return ExperienceBatch(*(np.append(a_, b_) for a_, b_ in zip(a, b)))
+
+
 if __name__ == "__main__":
     import gym
     import os
@@ -120,15 +125,4 @@ if __name__ == "__main__":
         )
         buffer.append(exp)
 
-    print(buffer.buffer)
-
-    buffer.save("buffer.pkl")
-
-    del buffer
-
-    buffer = ReplayBuffer.from_file("buffer.pkl")
-
-    print()
-    print(buffer.buffer)
-
-    os.remove("buffer.pkl")
+    print(buffer)

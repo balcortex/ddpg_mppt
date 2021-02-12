@@ -512,6 +512,122 @@ class DPPGWarmStartMPPT(RLMPPT):
         return agent
 
 
+class DPPGCoLMPPT(RLMPPT):
+    def __init__(
+        self,
+        demo_buffer_size: int,
+        epochs: int,
+        n_steps: int,
+        gamma: float,
+        use_real_weather: bool,
+        buffer_size: int,
+        batch_size: int,
+        actor_lr: float,
+        actor_l2: float,
+        critic_lr: float,
+        critic_l2: float,
+        tau: float,
+        lambda_q1: float,
+        lambda_bc: float,
+        lambda_a: float,
+        noise_mean: float,
+        noise_std: float,
+        noise_steps: float,
+        norm_rewards: bool,
+        decrease_noise: bool,
+        pretrain_steps: int,
+        model_name: str = "pv_boost_avg_rload",
+    ):
+        self._locals = locals()
+        self.demo_buffer_size = demo_buffer_size
+        self.buffer_size = buffer_size
+        self.batch_size = batch_size
+        self.actor_lr = actor_lr
+        self.actor_l2 = actor_l2
+        self.critic_lr = critic_lr
+        self.critic_l2 = critic_l2
+        self.tau = tau
+        self.noise_mean = noise_mean
+        self.noise_std = noise_std
+        self.noise_steps = noise_steps
+        self.norm_rewards = norm_rewards
+        self.decrease_noise = decrease_noise
+        self.pretrain_steps = pretrain_steps
+        self.lambda_q1 = lambda_q1
+        self.lambda_bc = lambda_bc
+        self.lambda_a = lambda_a
+
+        super().__init__(
+            epochs=epochs,
+            gamma=gamma,
+            n_steps=n_steps,
+            use_real_weather=use_real_weather,
+            model_name=model_name,
+        )
+
+    def _get_conf_dict(self) -> Dict[str, Any]:
+        "Return the experiment configuration (to save to a file later)"
+        return self._locals
+
+    def _get_expert_test_source(self) -> ExperienceSource:
+        "Return the expert source for the test environment"
+        return self.expert_test_source
+
+    def _get_agent_test_source(self) -> ExperienceSource:
+        "Return the agent source for the test environment"
+        return self.agent_test_source
+
+    def _get_agent(self) -> rl.DDPGWarmStartAgent:
+        "Return the agent to be used"
+        trn_env, _, tst_env = self._get_envs()
+        actor, critic = rl.create_ddpg_actor_critic(trn_env)
+        demo_collect_policy = PerturbObservePolicyDCDC(env=trn_env, v_step=DC_STEP)
+        demo_test_policy = PerturbObservePolicyDCDC(env=tst_env, v_step=DC_STEP)
+        agent_collect_policy = DDPGPolicy(
+            env=trn_env,
+            net=actor,
+            noise=GaussianNoise(self.noise_mean, self.noise_std),
+            schedule=LinearSchedule(max_steps=self.noise_steps),
+            decrease_noise=self.decrease_noise,
+        )
+        agent_test_policy = DDPGPolicy(env=tst_env, net=actor)
+
+        demo_collect_source = self._create_exp_source(
+            demo_collect_policy, "po-expert-collect"
+        )
+        self.expert_test_source = self._create_exp_source(
+            demo_test_policy, "po-expert-test"
+        )
+        collect_source = self._create_exp_source(
+            agent_collect_policy, "ddpg-agent-collect"
+        )
+        self.agent_test_source = self._create_exp_source(
+            agent_test_policy, "ddpg-agent-test"
+        )
+
+        agent = rl.DDPGCoLAgent(
+            actor=actor,
+            critic=critic,
+            demo_source=demo_collect_source,
+            collect_source=collect_source,
+            actor_lr=self.actor_lr,
+            actor_l2=self.actor_l2,
+            critic_lr=self.critic_lr,
+            critic_l2=self.critic_l2,
+            lambda_q1=self.lambda_q1,
+            lambda_bc=self.lambda_bc,
+            lambda_a=self.lambda_a,
+            tau=self.tau,
+            demo_buffer_size=self.demo_buffer_size,
+            buffer_size=self.buffer_size,
+            batch_size=self.batch_size,
+            pretrain_steps=self.pretrain_steps,
+            norm_rewards=self.norm_rewards,
+        )
+
+        return agent
+
+
 def main_bc():
     grid = {
         "epochs": [100_000],
@@ -575,9 +691,9 @@ def main_ddpg_warm_start():
         "batch_size": [64],
         "actor_lr": [1e-3],
         "actor_l2": [1e-3],
-        "critic_lr": [1e-2],
-        "critic_l2": [1e-4],
-        "tau": [1e-3],
+        "critic_lr": [1e-3],
+        "critic_l2": [0],
+        "tau": [1e-4],
         "noise_mean": [0.0],
         "noise_std": [0.001],
         "noise_steps": [5000],
@@ -619,6 +735,38 @@ def main_ddpg_warm_start():
     sort_eff()
 
 
+def main_ddpg_col():
+    grid = {
+        "demo_buffer_size": [5000],
+        "epochs": [1000],
+        "n_steps": [1],
+        "gamma": [0.1],
+        "use_real_weather": [False],
+        "buffer_size": [50_000],
+        "batch_size": [128],
+        "actor_lr": [1e-3],
+        "actor_l2": [1e-4],
+        "critic_lr": [1e-3],
+        "critic_l2": [1e-2],
+        "tau": [1e-3],
+        "lambda_q1": [1.0],
+        "lambda_bc": [0.1],
+        "lambda_a": [1.0],
+        "noise_mean": [0.0],
+        "noise_std": [0.001],
+        "noise_steps": [5_000],
+        "norm_rewards": [False],
+        "decrease_noise": [False],
+        "pretrain_steps": [20_000],
+    }
+
+    for agent in DPPGCoLMPPT.from_grid(grid, repeat=1):
+        agent.learn()
+        agent.export_results()
+
+    sort_eff()
+
+
 if __name__ == "__main__":
     try:
         ENGINE.quit()  # type: ignore
@@ -634,4 +782,5 @@ if __name__ == "__main__":
 
     # main_bc()
     # main_ddpg()
-    main_ddpg_warm_start()
+    # main_ddpg_warm_start()
+    main_ddpg_col()
