@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple, U
 import sys
 import gym
 import torch
+from torch.functional import norm
 import torch.nn as nn
 from torch.optim import Adam
 from torch.nn import functional as F
@@ -504,76 +505,6 @@ class DDPGAgent(Agent):
         self.critic_target.sync()
 
 
-class DDPGWarmStartAgent(DDPGAgent):
-    def __init__(
-        self,
-        demo_train_source: ExperienceSource,
-        demo_val_source: ExperienceSource,
-        agent_val_source: ExperienceSource,
-        agent_test_source: ExperienceSource,
-        collect_exp_source: ExperienceSource,
-        actor: DDPGActor,
-        critic: DDPGCritic,
-        demo_buffer_size: int = 50_000,
-        demo_batch_size: int = 64,
-        demo_actor_lr: float = 1e-4,
-        demo_actor_l2: float = 1e-2,
-        demo_epochs: int = 10_000,
-        demo_val_every_steps: int = 500,
-        buffer_size: int = 10_000,
-        batch_size: int = 64,
-        actor_lr: float = 1e-4,
-        critic_lr: float = 1e-3,
-        actor_l2: float = 0.0,
-        critic_l2: float = 0.0,
-        tau: float = 1e-3,
-        norm_rewards: bool = False,
-        critic_pretrain_steps: int = 1000,
-    ):
-
-        self.actor = actor
-        self.critic_pretrain_steps = critic_pretrain_steps
-
-        self.bc_agent = BCAgent(
-            demo_train_source=demo_train_source,
-            demo_val_source=demo_val_source,
-            agent_val_source=agent_val_source,
-            agent_test_source=agent_test_source,
-            actor=self.actor,
-            demo_buffer_size=demo_buffer_size,
-            demo_batch_size=demo_batch_size,
-            actor_lr=demo_actor_lr,
-            actor_l2=demo_actor_l2,
-        )
-        self.bc_agent.learn(epochs=demo_epochs, val_every=demo_val_every_steps)
-        self.demo_batch_size = demo_batch_size
-        self.demo_buffer = self.bc_agent.demo_buffer
-
-        super().__init__(
-            collect_exp_source=collect_exp_source,
-            agent_test_source=agent_test_source,
-            actor=self.actor,
-            critic=critic,
-            buffer_size=buffer_size,
-            batch_size=batch_size,
-            actor_lr=actor_lr,
-            critic_lr=critic_lr,
-            actor_l2=actor_l2,
-            critic_l2=critic_l2,
-            tau=tau,
-            norm_rewards=norm_rewards,
-        )
-
-    def _init(self) -> None:
-        self.fill_buffers()
-        self._train_critic(
-            train_steps=self.critic_pretrain_steps,
-            buffer=self.buffer,
-            batch_size=self.batch_size,
-            show_prog_bar=True,
-        )
-
-
 class DDPGCoLAgent(Agent):
     def __init__(
         self,
@@ -641,6 +572,12 @@ class DDPGCoLAgent(Agent):
                     self.batch_size,
                     norm_rewards=self.norm_rewards,
                 )
+            # else:
+            #     batch = Agent._prepare_batch(
+            #         self.buffer,
+            #         self.batch_size,
+            #         norm_rewards=self.norm_rewards,
+            #     )
             else:
                 demo_batch = Agent._prepare_batch(
                     self.demo_buffer,
@@ -720,6 +657,78 @@ class DDPGCoLAgent(Agent):
         for _ in range(steps):
             exp = next(self.collect_source)[0]
             self._append_to_buffer(self.buffer, exp)
+
+
+class DDPGWarmStartAgent(DDPGCoLAgent):
+    def __init__(
+        self,
+        demo_train_source: ExperienceSource,
+        demo_val_source: ExperienceSource,
+        bcagent_val_source: ExperienceSource,
+        bcagent_test_source: ExperienceSource,
+        bcagent_expert_source: ExperienceSource,
+        collect_exp_source: ExperienceSource,
+        agent_exp_source: ExperienceSource,
+        bcactor: DDPGActor,
+        actor: TargetNet,
+        critic: DDPGCritic,
+        demo_buffer_size: int = 50_000,
+        demo_batch_size: int = 64,
+        demo_actor_lr: float = 1e-4,
+        demo_actor_l2: float = 1e-2,
+        demo_epochs: int = 10_000,
+        demo_val_every_steps: int = 500,
+        buffer_size: int = 10_000,
+        batch_size: int = 64,
+        actor_lr: float = 1e-4,
+        critic_lr: float = 1e-3,
+        actor_l2: float = 0.0,
+        critic_l2: float = 0.0,
+        tau: float = 1e-3,
+        lambda_q1: float = 1.0,
+        lambda_bc: float = 0.1,
+        lambda_a: float = 1.0,
+        norm_rewards: bool = False,
+        pretrain_steps: int = 1000,
+    ):
+
+        self.agent_test_source = agent_exp_source
+
+        self.bc_agent = BCAgent(
+            demo_train_source=demo_train_source,
+            demo_val_source=demo_val_source,
+            agent_val_source=bcagent_val_source,
+            agent_test_source=bcagent_test_source,
+            actor=bcactor,
+            demo_buffer_size=demo_buffer_size,
+            demo_batch_size=demo_batch_size,
+            actor_lr=demo_actor_lr,
+            actor_l2=demo_actor_l2,
+        )
+        self.bc_agent.learn(epochs=demo_epochs, val_every=demo_val_every_steps)
+        actor.sync()
+
+        bcagent_expert_source.env.reset()
+
+        super().__init__(
+            actor=actor.target_model,
+            critic=critic,
+            demo_source=bcagent_expert_source,
+            collect_source=collect_exp_source,
+            actor_lr=actor_lr,
+            actor_l2=actor_l2,
+            critic_lr=critic_lr,
+            critic_l2=critic_l2,
+            lambda_q1=lambda_q1,
+            lambda_bc=lambda_bc,
+            lambda_a=lambda_a,
+            tau=tau,
+            demo_buffer_size=demo_buffer_size,
+            buffer_size=buffer_size,
+            batch_size=batch_size,
+            pretrain_steps=pretrain_steps,
+            norm_rewards=norm_rewards,
+        )
 
 
 if __name__ == "__main__":

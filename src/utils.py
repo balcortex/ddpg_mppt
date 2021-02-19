@@ -2,7 +2,7 @@ import datetime
 import itertools
 import json
 import os
-from typing import Any, Dict, Generator, Optional, Sequence, Union
+from typing import Any, Dict, Generator, List, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -67,3 +67,8 @@ def make_datetime_folder(basepath: str) -> str:
     os.makedirs(path, exist_ok=True)
 
     return path
+
+
+def flat_list(lst: List[List[Any]]) -> List[Any]:
+    "Flatten a list made out of lists"
+    return [item for sublist in lst for item in sublist]

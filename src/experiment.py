@@ -27,7 +27,6 @@ WEATHER_TEST_PATH = os.path.join("data", "weather_real_test.csv")
 WEATHER_SIM_PATH = os.path.join("data", "weather_sim.csv")
 STATES = ["v_norm", "p_norm", "dv_norm"]
 DUTY_CYCLE_INITIAL = 0.0
-DC_STEP = 0.02
 
 
 class Envs(NamedTuple):
@@ -46,6 +45,7 @@ class RLMPPT(ABC):
         gamma: float = 0.99,
         n_steps: int = 1,
         use_real_weather: bool = True,
+        dc_step: float = 0.02,
         model_name: str = "pv_boost_avg_rload",
     ):
         self.exp_conf = locals()
@@ -53,6 +53,7 @@ class RLMPPT(ABC):
         self.gamma = gamma
         self.n_steps = n_steps
         self.use_real_weather = use_real_weather
+        self.dc_step = dc_step
 
         self.path = utils.make_datetime_folder(os.path.join("data", "dataframes"))
 
@@ -102,7 +103,10 @@ class RLMPPT(ABC):
     def play_agent_test_episode(self) -> None:
         "Use the agent to play an episode in the test environment"
         agent_source = self._get_agent_test_source()
-        agent_source.play_all_episodes()
+        if not isinstance(agent_source, list):
+            agent_source = [agent_source]
+        for source in agent_source:
+            source.play_all_episodes()
 
     def _create_exp_source(self, policy: BasePolicy, name: str) -> BasePolicy:
         "Create a experience source from a policy"
@@ -197,6 +201,7 @@ class BCMPPT(RLMPPT):
         demo_batch_size: int,
         actor_lr: float,
         actor_l2: float,
+        dc_step: float,
         model_name: str = "pv_boost_avg_rload",
     ):
         self._locals = locals()
@@ -210,6 +215,7 @@ class BCMPPT(RLMPPT):
             n_steps=n_steps,
             use_real_weather=use_real_weather,
             model_name=model_name,
+            dc_step=dc_step,
         )
 
     def _get_conf_dict(self) -> Dict[str, Any]:
@@ -242,19 +248,19 @@ class BCMPPT(RLMPPT):
         )
         demo_trn_policy = PerturbObservePolicyDCDC(
             env=trn_env,
-            v_step=DC_STEP,
+            v_step=self.dc_step,
             dv_index="dv",
             dp_index="dp",
         )
         demo_val_policy = PerturbObservePolicyDCDC(
             env=val_env,
-            v_step=DC_STEP,
+            v_step=self.dc_step,
             dv_index="dv",
             dp_index="dp",
         )
         demo_tst_policy = PerturbObservePolicyDCDC(
             env=tst_env,
-            v_step=DC_STEP,
+            v_step=self.dc_step,
             dv_index="dv",
             dp_index="dp",
         )
@@ -298,6 +304,7 @@ class DDPGMPPT(RLMPPT):
         noise_std: float,
         noise_steps: float,
         norm_rewards: bool,
+        dc_step: float,
         model_name: str = "pv_boost_avg_rload",
     ):
         self._locals = locals()
@@ -317,6 +324,7 @@ class DDPGMPPT(RLMPPT):
             gamma=gamma,
             n_steps=n_steps,
             use_real_weather=use_real_weather,
+            dc_step=dc_step,
             model_name=model_name,
         )
 
@@ -352,7 +360,7 @@ class DDPGMPPT(RLMPPT):
         )
         demo_test_policy = PerturbObservePolicyDCDC(
             env=tst_env,
-            v_step=DC_STEP,
+            v_step=self.dc_step,
             dv_index="dv",
             dp_index="dp",
         )
@@ -403,12 +411,16 @@ class DPPGWarmStartMPPT(RLMPPT):
         critic_lr: float,
         critic_l2: float,
         tau: float,
+        lambda_q1: float,
+        lambda_bc: float,
+        lambda_a: float,
         noise_mean: float,
         noise_std: float,
         noise_steps: float,
         norm_rewards: bool,
         decrease_noise: bool,
-        critic_pretrain_steps: int,
+        pretrain_steps: int,
+        dc_step: float,
         model_name: str = "pv_boost_avg_rload",
     ):
         self._locals = locals()
@@ -425,18 +437,22 @@ class DPPGWarmStartMPPT(RLMPPT):
         self.critic_lr = critic_lr
         self.critic_l2 = critic_l2
         self.tau = tau
+        self.lambda_q1 = lambda_q1
+        self.lambda_bc = lambda_bc
+        self.lambda_a = lambda_a
         self.noise_mean = noise_mean
         self.noise_std = noise_std
         self.noise_steps = noise_steps
         self.norm_rewards = norm_rewards
         self.decrease_noise = decrease_noise
-        self.critic_pretrain_steps = critic_pretrain_steps
+        self.pretrain_steps = pretrain_steps
 
         super().__init__(
             epochs=epochs,
             gamma=gamma,
             n_steps=n_steps,
             use_real_weather=use_real_weather,
+            dc_step=dc_step,
             model_name=model_name,
         )
 
@@ -450,15 +466,16 @@ class DPPGWarmStartMPPT(RLMPPT):
 
     def _get_agent_test_source(self) -> ExperienceSource:
         "Return the agent source for the test environment"
-        return self.agent.agent_test_source
+        return [self.bcagent_test_source, self.agent.agent_test_source]
 
     def _get_agent(self) -> rl.DDPGWarmStartAgent:
         "Return the agent to be used"
         trn_env, val_env, tst_env = self._get_envs()
-        actor, critic = rl.create_ddpg_actor_critic(trn_env)
-        demo_collect_policy = PerturbObservePolicyDCDC(env=trn_env, v_step=DC_STEP)
-        demo_val_policy = PerturbObservePolicyDCDC(env=val_env, v_step=DC_STEP)
-        demo_test_policy = PerturbObservePolicyDCDC(env=tst_env, v_step=DC_STEP)
+        bcactor, critic = rl.create_ddpg_actor_critic(trn_env)
+        actor = rl.TargetNet(bcactor)
+        demo_collect_policy = PerturbObservePolicyDCDC(env=trn_env, v_step=self.dc_step)
+        demo_val_policy = PerturbObservePolicyDCDC(env=val_env, v_step=self.dc_step)
+        demo_test_policy = PerturbObservePolicyDCDC(env=tst_env, v_step=self.dc_step)
         agent_collect_policy = DDPGPolicy(
             env=trn_env,
             net=actor,
@@ -466,8 +483,10 @@ class DPPGWarmStartMPPT(RLMPPT):
             schedule=LinearSchedule(max_steps=self.noise_steps),
             decrease_noise=self.decrease_noise,
         )
-        agent_val_policy = DDPGPolicy(env=val_env, net=actor)
-        agent_test_policy = DDPGPolicy(env=tst_env, net=actor)
+        bcagent_val_policy = DDPGPolicy(env=val_env, net=bcactor)
+        bcagent_test_policy = DDPGPolicy(env=tst_env, net=bcactor)
+        bcagent_expert_policy = DDPGPolicy(env=trn_env, net=bcactor)
+        agent_expert_policy = DDPGPolicy(env=tst_env, net=actor)
 
         demo_collect_source = self._create_exp_source(
             demo_collect_policy, "po-expert-collect"
@@ -479,17 +498,26 @@ class DPPGWarmStartMPPT(RLMPPT):
         collect_source = self._create_exp_source(
             agent_collect_policy, "ddpg-agent-collect"
         )
-        agent_val_source = self._create_exp_source(agent_val_policy, "ddpg-agent-val")
-        agent_test_source = self._create_exp_source(
-            agent_test_policy, "ddpg-agent-test"
+        bcagent_val_source = self._create_exp_source(bcagent_val_policy, "bc-agent-val")
+        self.bcagent_test_source = self._create_exp_source(
+            bcagent_test_policy, "bc-expert-test"
+        )
+        bcagent_expert_source = self._create_exp_source(
+            bcagent_expert_policy, "bc-expert-collect"
+        )
+        agent_expert_source = self._create_exp_source(
+            agent_expert_policy, "ddpg-agent-test"
         )
 
         agent = rl.DDPGWarmStartAgent(
             demo_train_source=demo_collect_source,
             demo_val_source=demo_val_source,
-            agent_val_source=agent_val_source,
-            agent_test_source=agent_test_source,
+            bcagent_val_source=bcagent_val_source,
+            bcagent_test_source=self.bcagent_test_source,
+            bcagent_expert_source=bcagent_expert_source,
             collect_exp_source=collect_source,
+            agent_exp_source=agent_expert_source,
+            bcactor=bcactor,
             actor=actor,
             critic=critic,
             demo_buffer_size=self.demo_buffer_size,
@@ -505,8 +533,11 @@ class DPPGWarmStartMPPT(RLMPPT):
             actor_l2=self.actor_l2,
             critic_l2=self.critic_l2,
             tau=self.tau,
+            lambda_q1=self.lambda_q1,
+            lambda_bc=self.lambda_bc,
+            lambda_a=self.lambda_a,
             norm_rewards=self.norm_rewards,
-            critic_pretrain_steps=self.critic_pretrain_steps,
+            pretrain_steps=self.pretrain_steps,
         )
 
         return agent
@@ -536,6 +567,7 @@ class DPPGCoLMPPT(RLMPPT):
         norm_rewards: bool,
         decrease_noise: bool,
         pretrain_steps: int,
+        dc_step: float,
         model_name: str = "pv_boost_avg_rload",
     ):
         self._locals = locals()
@@ -563,6 +595,7 @@ class DPPGCoLMPPT(RLMPPT):
             n_steps=n_steps,
             use_real_weather=use_real_weather,
             model_name=model_name,
+            dc_step=dc_step,
         )
 
     def _get_conf_dict(self) -> Dict[str, Any]:
@@ -581,8 +614,8 @@ class DPPGCoLMPPT(RLMPPT):
         "Return the agent to be used"
         trn_env, _, tst_env = self._get_envs()
         actor, critic = rl.create_ddpg_actor_critic(trn_env)
-        demo_collect_policy = PerturbObservePolicyDCDC(env=trn_env, v_step=DC_STEP)
-        demo_test_policy = PerturbObservePolicyDCDC(env=tst_env, v_step=DC_STEP)
+        demo_collect_policy = PerturbObservePolicyDCDC(env=trn_env, v_step=self.dc_step)
+        demo_test_policy = PerturbObservePolicyDCDC(env=tst_env, v_step=self.dc_step)
         agent_collect_policy = DDPGPolicy(
             env=trn_env,
             net=actor,
@@ -632,15 +665,16 @@ def main_bc():
     grid = {
         "epochs": [100_000],
         "n_steps": [1],
-        # "use_real_weather": [True],
-        "use_real_weather": [False],
+        "use_real_weather": [False, True],
+        # "use_real_weather": [False],
         "demo_buffer_size": [5000],
         "demo_batch_size": [512],
         "actor_lr": [1e-2],
         "actor_l2": [1e-4],
+        "dc_step": [0.010, 0.015, 0.020, 0.025],
     }
 
-    for agent in BCMPPT.from_grid(grid, repeat=1):
+    for agent in BCMPPT.from_grid(grid, repeat=5):
         agent.learn(val_every=500)
         agent.export_results()
 
@@ -652,10 +686,10 @@ def main_ddpg():
         "epochs": [20_000],
         "n_steps": [1],
         "gamma": [0.1],
-        "use_real_weather": [True],
+        "use_real_weather": [False, True],
         # "use_real_weather": [False],
         "buffer_size": [50_000],
-        "batch_size": [64, 128, 512],
+        "batch_size": [64],
         "actor_lr": [1e-3],
         "actor_l2": [1e-3],
         "critic_lr": [1e-3],
@@ -665,6 +699,7 @@ def main_ddpg():
         "noise_std": [0.4],
         "noise_steps": [5000],
         "norm_rewards": [False],
+        "dc_step": [0.020],
     }
 
     for agent in DDPGMPPT.from_grid(grid, repeat=5):
@@ -682,53 +717,33 @@ def main_ddpg_warm_start():
         "demo_actor_lr": [1e-2],
         "demo_actor_l2": [1e-4],
         "demo_val_every_steps": [500],
-        "epochs": [1_000],
+        "epochs": [10_000],
         "n_steps": [1],
         "gamma": [0.1],
-        # "use_real_weather": [True],
-        "use_real_weather": [False],
+        "use_real_weather": [True],
         "buffer_size": [50_000],
-        "batch_size": [64],
-        "actor_lr": [1e-3],
-        "actor_l2": [1e-3],
-        "critic_lr": [1e-3],
-        "critic_l2": [0],
+        "batch_size": [512],
+        "actor_lr": [1e-4],
+        # "actor_l2": [1e-4],
+        "actor_l2": [1e-4],
+        "critic_lr": [1e-4],
+        # "critic_l2": [1e-2],
+        "critic_l2": [1e-4],
         "tau": [1e-4],
+        "lambda_q1": [1.0],
+        "lambda_bc": [0.1],
+        "lambda_a": [1.0],
         "noise_mean": [0.0],
-        "noise_std": [0.001],
+        # "noise_std": [0.05],
+        "noise_std": [0.005],
         "noise_steps": [5000],
         "norm_rewards": [False],
-        "decrease_noise": [False],
-        "critic_pretrain_steps": [1000, 5000, 10_000, 20_000],
+        "decrease_noise": [True],
+        "dc_step": [0.020],
+        "pretrain_steps": [500],
     }
-    # grid = {
-    #     "demo_epochs": [100_000],
-    #     "demo_buffer_size": [5_000],
-    #     "demo_batch_size": [512],
-    #     "demo_actor_lr": [1e-2],
-    #     "demo_actor_l2": [1e-4],
-    #     "demo_val_every_steps": [500],
-    #     "epochs": [1_000],
-    #     "n_steps": [1],
-    #     "gamma": [0.1],
-    #     # "use_real_weather": [True],
-    #     "use_real_weather": [False],
-    #     "buffer_size": [50_000],
-    #     "batch_size": [64],
-    #     "actor_lr": [1e-3],
-    #     "actor_l2": [1e-3],
-    #     "critic_lr": [1e-3],
-    #     "critic_l2": [1e-5],
-    #     "tau": [1e-3],
-    #     "noise_mean": [0.0],
-    #     "noise_std": [0.001],
-    #     "noise_steps": [5000],
-    #     "norm_rewards": [False],
-    #     "decrease_noise": [False],
-    #     "critic_pretrain_steps": [1000],
-    # }
 
-    for agent in DPPGWarmStartMPPT.from_grid(grid, repeat=1):
+    for agent in DPPGWarmStartMPPT.from_grid(grid, repeat=20):
         agent.learn(val_every=500)
         agent.export_results()
 
@@ -738,7 +753,7 @@ def main_ddpg_warm_start():
 def main_ddpg_col():
     grid = {
         "demo_buffer_size": [5000],
-        "epochs": [1000],
+        "epochs": [10_000],
         "n_steps": [1],
         "gamma": [0.1],
         "use_real_weather": [False],
@@ -753,14 +768,14 @@ def main_ddpg_col():
         "lambda_bc": [0.1],
         "lambda_a": [1.0],
         "noise_mean": [0.0],
-        "noise_std": [0.001],
+        "noise_std": [0.1],
         "noise_steps": [5_000],
         "norm_rewards": [False],
-        "decrease_noise": [False],
-        "pretrain_steps": [20_000],
+        "decrease_noise": [True],
+        "pretrain_steps": [10_000],
     }
 
-    for agent in DPPGCoLMPPT.from_grid(grid, repeat=1):
+    for agent in DPPGCoLMPPT.from_grid(grid, repeat=30):
         agent.learn()
         agent.export_results()
 
@@ -782,5 +797,5 @@ if __name__ == "__main__":
 
     # main_bc()
     # main_ddpg()
-    # main_ddpg_warm_start()
-    main_ddpg_col()
+    main_ddpg_warm_start()
+    # main_ddpg_col()
