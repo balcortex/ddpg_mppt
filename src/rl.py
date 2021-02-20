@@ -2,10 +2,8 @@ import copy
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple, Union
 
-import sys
 import gym
 import torch
-from torch.functional import norm
 import torch.nn as nn
 from torch.optim import Adam
 from torch.nn import functional as F
@@ -141,6 +139,7 @@ def create_ddpg_actor_critic(
     actor_kwargs: Optional[Dict[str, Union[Sequence[int], int]]] = {},
     critic_kwargs: Optional[Dict[str, int]] = {},
 ) -> Tuple[nn.Module, nn.Module]:
+    """Create a DDPG actor and critic from a gym environment"""
     actor = DDPGActor(
         obs_size=env.observation_space.shape[0],
         act_size=env.action_space.shape[0],
@@ -525,6 +524,7 @@ class DDPGCoLAgent(Agent):
         batch_size: int = 64,
         pretrain_steps: int = 1000,
         norm_rewards: bool = False,
+        demo_percentage: float = 0.25,
     ):
         self.demo_source = demo_source
         self.collect_source = collect_source
@@ -537,6 +537,7 @@ class DDPGCoLAgent(Agent):
         self.tau = tau
         self.batch_size = batch_size
         self.norm_rewards = norm_rewards
+        self.demo_percentage = demo_percentage
 
         self.gamma = self.collect_source.gamma
         self.n_steps = self.collect_source.n_steps
@@ -566,30 +567,31 @@ class DDPGCoLAgent(Agent):
         "Train the agents' networks"
         for _ in tqdm(range(train_steps), desc="Training", disable=not show_prog_bar):
             batch = None
-            if pre_train:
+            if pre_train or self.demo_percentage == 1.0:
                 batch = Agent._prepare_batch(
                     self.demo_buffer,
                     self.batch_size,
                     norm_rewards=self.norm_rewards,
                 )
-            # else:
-            #     batch = Agent._prepare_batch(
-            #         self.buffer,
-            #         self.batch_size,
-            #         norm_rewards=self.norm_rewards,
-            #     )
             else:
-                demo_batch = Agent._prepare_batch(
-                    self.demo_buffer,
-                    int(0.25 * self.batch_size),
-                    norm_rewards=self.norm_rewards,
-                )
-                agent_batch = Agent._prepare_batch(
-                    self.buffer,
-                    int(0.75 * self.batch_size),
-                    norm_rewards=self.norm_rewards,
-                )
-                batch = self._merge_tensor_batches(demo_batch, agent_batch)
+                if self.demo_percentage == 0:
+                    batch = Agent._prepare_batch(
+                        self.buffer,
+                        self.batch_size,
+                        norm_rewards=self.norm_rewards,
+                    )
+                else:
+                    demo_batch = Agent._prepare_batch(
+                        self.demo_buffer,
+                        int(self.demo_percentage * self.batch_size),
+                        norm_rewards=self.norm_rewards,
+                    )
+                    agent_batch = Agent._prepare_batch(
+                        self.buffer,
+                        int((1 - self.demo_percentage) * self.batch_size),
+                        norm_rewards=self.norm_rewards,
+                    )
+                    batch = self._merge_tensor_batches(demo_batch, agent_batch)
 
             pred_last_action = self.actor_target(batch.last_state)
             q_last = self.critic_target(batch.last_state, pred_last_action).squeeze(-1)
@@ -690,6 +692,7 @@ class DDPGWarmStartAgent(DDPGCoLAgent):
         lambda_a: float = 1.0,
         norm_rewards: bool = False,
         pretrain_steps: int = 1000,
+        demo_percentage: float = 0.25,
     ):
 
         self.agent_test_source = agent_exp_source
@@ -728,6 +731,7 @@ class DDPGWarmStartAgent(DDPGCoLAgent):
             batch_size=batch_size,
             pretrain_steps=pretrain_steps,
             norm_rewards=norm_rewards,
+            demo_percentage=demo_percentage,
         )
 
 

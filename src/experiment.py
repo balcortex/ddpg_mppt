@@ -2,12 +2,10 @@ from __future__ import annotations
 import os
 import time
 from abc import ABC, abstractmethod
-from collections import namedtuple
-from typing import Any, Dict, NamedTuple, Optional, Tuple, Union, Generator
+from typing import Any, Dict, NamedTuple, Optional, Sequence, Tuple, Union, Generator
 
 import matlab.engine
 import pandas as pd
-import torch
 
 from src import rl, utils
 from src.experience import ExperienceSource, ExperienceSourceDiscountedSteps
@@ -33,9 +31,6 @@ class Envs(NamedTuple):
     trn: Optional[PVEnv]
     val: Optional[PVEnv]
     tst: Optional[PVEnv]
-
-
-# class Policies(NamedTuple):
 
 
 class RLMPPT(ABC):
@@ -421,6 +416,7 @@ class DPPGWarmStartMPPT(RLMPPT):
         decrease_noise: bool,
         pretrain_steps: int,
         dc_step: float,
+        demo_percentage: float,
         model_name: str = "pv_boost_avg_rload",
     ):
         self._locals = locals()
@@ -446,6 +442,7 @@ class DPPGWarmStartMPPT(RLMPPT):
         self.norm_rewards = norm_rewards
         self.decrease_noise = decrease_noise
         self.pretrain_steps = pretrain_steps
+        self.demo_percentage = demo_percentage
 
         super().__init__(
             epochs=epochs,
@@ -538,6 +535,7 @@ class DPPGWarmStartMPPT(RLMPPT):
             lambda_a=self.lambda_a,
             norm_rewards=self.norm_rewards,
             pretrain_steps=self.pretrain_steps,
+            demo_percentage=self.demo_percentage,
         )
 
         return agent
@@ -568,6 +566,7 @@ class DPPGCoLMPPT(RLMPPT):
         decrease_noise: bool,
         pretrain_steps: int,
         dc_step: float,
+        demo_percentage: float,
         model_name: str = "pv_boost_avg_rload",
     ):
         self._locals = locals()
@@ -588,6 +587,7 @@ class DPPGCoLMPPT(RLMPPT):
         self.lambda_q1 = lambda_q1
         self.lambda_bc = lambda_bc
         self.lambda_a = lambda_a
+        self.demo_percentage = demo_percentage
 
         super().__init__(
             epochs=epochs,
@@ -656,38 +656,37 @@ class DPPGCoLMPPT(RLMPPT):
             batch_size=self.batch_size,
             pretrain_steps=self.pretrain_steps,
             norm_rewards=self.norm_rewards,
+            demo_percentage=self.demo_percentage,
         )
 
         return agent
 
 
-def main_bc():
+def main_bc(real_weather: Sequence[bool], num_experiments: int):
     grid = {
         "epochs": [100_000],
         "n_steps": [1],
-        "use_real_weather": [False, True],
-        # "use_real_weather": [False],
+        "use_real_weather": real_weather,
         "demo_buffer_size": [5000],
         "demo_batch_size": [512],
         "actor_lr": [1e-2],
         "actor_l2": [1e-4],
-        "dc_step": [0.010, 0.015, 0.020, 0.025],
+        "dc_step": [0.020],
     }
 
-    for agent in BCMPPT.from_grid(grid, repeat=5):
+    for agent in BCMPPT.from_grid(grid, repeat=num_experiments):
         agent.learn(val_every=500)
         agent.export_results()
 
-    sort_eff()
+    # sort_eff()
 
 
-def main_ddpg():
+def main_ddpg(real_weather: Sequence[bool], num_experiments: int):
     grid = {
         "epochs": [20_000],
         "n_steps": [1],
         "gamma": [0.1],
-        "use_real_weather": [False, True],
-        # "use_real_weather": [False],
+        "use_real_weather": real_weather,
         "buffer_size": [50_000],
         "batch_size": [64],
         "actor_lr": [1e-3],
@@ -702,14 +701,14 @@ def main_ddpg():
         "dc_step": [0.020],
     }
 
-    for agent in DDPGMPPT.from_grid(grid, repeat=5):
+    for agent in DDPGMPPT.from_grid(grid, repeat=num_experiments):
         agent.learn(val_every=500)
         agent.export_results()
 
-    sort_eff()
+    # sort_eff()
 
 
-def main_ddpg_warm_start():
+def main_ddpg_warm_start(real_weather: Sequence[bool], num_experiments: int):
     grid = {
         "demo_epochs": [100_000],
         "demo_buffer_size": [5_000],
@@ -720,43 +719,41 @@ def main_ddpg_warm_start():
         "epochs": [10_000],
         "n_steps": [1],
         "gamma": [0.1],
-        "use_real_weather": [True],
+        "use_real_weather": real_weather,
         "buffer_size": [50_000],
         "batch_size": [512],
         "actor_lr": [1e-4],
-        # "actor_l2": [1e-4],
         "actor_l2": [1e-4],
         "critic_lr": [1e-4],
-        # "critic_l2": [1e-2],
         "critic_l2": [1e-4],
         "tau": [1e-4],
         "lambda_q1": [1.0],
         "lambda_bc": [0.1],
         "lambda_a": [1.0],
         "noise_mean": [0.0],
-        # "noise_std": [0.05],
-        "noise_std": [0.005],
+        "noise_std": [0.05],
         "noise_steps": [5000],
         "norm_rewards": [False],
         "decrease_noise": [True],
         "dc_step": [0.020],
         "pretrain_steps": [500],
+        "demo_percentage": [0.3],
     }
 
-    for agent in DPPGWarmStartMPPT.from_grid(grid, repeat=20):
+    for agent in DPPGWarmStartMPPT.from_grid(grid, repeat=num_experiments):
         agent.learn(val_every=500)
         agent.export_results()
 
-    sort_eff()
+    # sort_eff()
 
 
-def main_ddpg_col():
+def main_ddpg_col(real_weather: Sequence[bool], num_experiments: int):
     grid = {
         "demo_buffer_size": [5000],
         "epochs": [10_000],
         "n_steps": [1],
         "gamma": [0.1],
-        "use_real_weather": [False],
+        "use_real_weather": real_weather,
         "buffer_size": [50_000],
         "batch_size": [128],
         "actor_lr": [1e-3],
@@ -773,13 +770,14 @@ def main_ddpg_col():
         "norm_rewards": [False],
         "decrease_noise": [True],
         "pretrain_steps": [10_000],
+        "demo_percentage": [0.3],
     }
 
-    for agent in DPPGCoLMPPT.from_grid(grid, repeat=30):
+    for agent in DPPGCoLMPPT.from_grid(grid, repeat=num_experiments):
         agent.learn()
         agent.export_results()
 
-    sort_eff()
+    # sort_eff()
 
 
 if __name__ == "__main__":
@@ -795,7 +793,7 @@ if __name__ == "__main__":
     except FileNotFoundError:
         pass
 
-    # main_bc()
-    # main_ddpg()
-    main_ddpg_warm_start()
-    # main_ddpg_col()
+    main_bc(real_weather=[False], num_experiments=5)
+    main_ddpg(real_weather=[False], num_experiments=5)
+    main_ddpg_warm_start(real_weather=[False], num_experiments=5)
+    main_ddpg_col(real_weather=[False], num_experiments=5)
