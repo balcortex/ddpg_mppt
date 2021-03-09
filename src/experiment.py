@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+from os import path
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, NamedTuple, Optional, Sequence, Tuple, Union, Generator
@@ -194,6 +195,7 @@ class BCMPPT(RLMPPT):
         use_real_weather: bool,
         demo_buffer_size: int,
         demo_batch_size: int,
+        demo_val_episodes: int,
         actor_lr: float,
         actor_l2: float,
         dc_step: float,
@@ -204,6 +206,7 @@ class BCMPPT(RLMPPT):
         self.demo_batch_size = demo_batch_size
         self.actor_lr = actor_lr
         self.actor_l2 = actor_l2
+        self.demo_val_episodes = demo_val_episodes
         super().__init__(
             epochs=epochs,
             gamma=1.0,
@@ -274,8 +277,10 @@ class BCMPPT(RLMPPT):
             actor=actor,
             demo_buffer_size=self.demo_buffer_size,
             demo_batch_size=self.demo_batch_size,
+            demo_val_episodes=self.demo_val_episodes,
             actor_lr=self.actor_lr,
             actor_l2=self.actor_l2,
+            path=self.path,
         )
 
         return agent
@@ -417,6 +422,7 @@ class DPPGWarmStartMPPT(RLMPPT):
         pretrain_steps: int,
         dc_step: float,
         demo_percentage: float,
+        q_filter: bool,
         model_name: str = "pv_boost_avg_rload",
     ):
         self._locals = locals()
@@ -443,6 +449,7 @@ class DPPGWarmStartMPPT(RLMPPT):
         self.decrease_noise = decrease_noise
         self.pretrain_steps = pretrain_steps
         self.demo_percentage = demo_percentage
+        self.q_filter = q_filter
 
         super().__init__(
             epochs=epochs,
@@ -536,6 +543,7 @@ class DPPGWarmStartMPPT(RLMPPT):
             norm_rewards=self.norm_rewards,
             pretrain_steps=self.pretrain_steps,
             demo_percentage=self.demo_percentage,
+            q_filter=self.q_filter,
         )
 
         return agent
@@ -567,6 +575,7 @@ class DPPGCoLMPPT(RLMPPT):
         pretrain_steps: int,
         dc_step: float,
         demo_percentage: float,
+        q_filter: bool,
         model_name: str = "pv_boost_avg_rload",
     ):
         self._locals = locals()
@@ -588,6 +597,7 @@ class DPPGCoLMPPT(RLMPPT):
         self.lambda_bc = lambda_bc
         self.lambda_a = lambda_a
         self.demo_percentage = demo_percentage
+        self.q_filter = q_filter
 
         super().__init__(
             epochs=epochs,
@@ -657,6 +667,7 @@ class DPPGCoLMPPT(RLMPPT):
             pretrain_steps=self.pretrain_steps,
             norm_rewards=self.norm_rewards,
             demo_percentage=self.demo_percentage,
+            q_filter=self.q_filter,
         )
 
         return agent
@@ -667,8 +678,11 @@ def main_bc(real_weather: Sequence[bool], num_experiments: int):
         "epochs": [100_000],
         "n_steps": [1],
         "use_real_weather": real_weather,
+        # "demo_buffer_size": [5000],
         "demo_buffer_size": [5000],
+        # "demo_batch_size": [512],
         "demo_batch_size": [512],
+        "demo_val_episodes": [4],
         "actor_lr": [1e-2],
         "actor_l2": [1e-4],
         "dc_step": [0.020],
@@ -683,19 +697,19 @@ def main_bc(real_weather: Sequence[bool], num_experiments: int):
 
 def main_ddpg(real_weather: Sequence[bool], num_experiments: int):
     grid = {
-        "epochs": [20_000],
+        "epochs": [10_000],
         "n_steps": [1],
         "gamma": [0.1],
         "use_real_weather": real_weather,
         "buffer_size": [50_000],
-        "batch_size": [64],
+        "batch_size": [100],
         "actor_lr": [1e-3],
         "actor_l2": [1e-3],
         "critic_lr": [1e-3],
         "critic_l2": [1e-5],
         "tau": [1e-3],
         "noise_mean": [0.0],
-        "noise_std": [0.4],
+        "noise_std": [0.1],
         "noise_steps": [5000],
         "norm_rewards": [False],
         "dc_step": [0.020],
@@ -711,7 +725,7 @@ def main_ddpg(real_weather: Sequence[bool], num_experiments: int):
 def main_ddpg_warm_start(real_weather: Sequence[bool], num_experiments: int):
     grid = {
         "demo_epochs": [100_000],
-        "demo_buffer_size": [5_000],
+        "demo_buffer_size": [1000],
         "demo_batch_size": [512],
         "demo_actor_lr": [1e-2],
         "demo_actor_l2": [1e-4],
@@ -721,23 +735,25 @@ def main_ddpg_warm_start(real_weather: Sequence[bool], num_experiments: int):
         "gamma": [0.1],
         "use_real_weather": real_weather,
         "buffer_size": [50_000],
-        "batch_size": [512],
+        "batch_size": [100],
         "actor_lr": [1e-4],
-        "actor_l2": [1e-4],
+        "actor_l2": [1e-2],
         "critic_lr": [1e-4],
         "critic_l2": [1e-4],
         "tau": [1e-4],
         "lambda_q1": [1.0],
-        "lambda_bc": [0.1],
+        # "lambda_bc": [0.6],
+        "lambda_bc": [1.0, 0.6, 0.1, 0.01],
         "lambda_a": [1.0],
         "noise_mean": [0.0],
-        "noise_std": [0.05],
+        "noise_std": [0.1],
         "noise_steps": [5000],
         "norm_rewards": [False],
         "decrease_noise": [True],
         "dc_step": [0.020],
-        "pretrain_steps": [500],
-        "demo_percentage": [0.3],
+        "pretrain_steps": [100],
+        "demo_percentage": [0.2],
+        "q_filter": [True],
     }
 
     for agent in DPPGWarmStartMPPT.from_grid(grid, repeat=num_experiments):
@@ -749,35 +765,35 @@ def main_ddpg_warm_start(real_weather: Sequence[bool], num_experiments: int):
 
 def main_ddpg_col(real_weather: Sequence[bool], num_experiments: int):
     grid = {
-        "demo_buffer_size": [5000],
+        "q_filter": [True],
+        "demo_buffer_size": [1000],
         "epochs": [10_000],
         "n_steps": [1],
         "gamma": [0.1],
         "use_real_weather": real_weather,
         "buffer_size": [50_000],
-        "batch_size": [128],
-        "actor_lr": [1e-3],
-        "actor_l2": [1e-4],
-        "critic_lr": [1e-3],
-        "critic_l2": [1e-2],
-        "tau": [1e-3],
+        "batch_size": [100],
+        "actor_lr": [1e-4],
+        "actor_l2": [1e-2],
+        "critic_lr": [1e-4],
+        "critic_l2": [1e-4],
+        "tau": [1e-4],
         "lambda_q1": [1.0],
-        "lambda_bc": [0.1],
+        "lambda_bc": [0.6],
         "lambda_a": [1.0],
         "noise_mean": [0.0],
         "noise_std": [0.1],
         "noise_steps": [5_000],
         "norm_rewards": [False],
         "decrease_noise": [True],
-        "pretrain_steps": [10_000],
-        "demo_percentage": [0.3],
+        "pretrain_steps": [100],
+        "demo_percentage": [0.2],
+        "dc_step": [0.020],
     }
 
     for agent in DPPGCoLMPPT.from_grid(grid, repeat=num_experiments):
         agent.learn()
         agent.export_results()
-
-    # sort_eff()
 
 
 if __name__ == "__main__":
@@ -793,7 +809,7 @@ if __name__ == "__main__":
     except FileNotFoundError:
         pass
 
-    main_bc(real_weather=[False], num_experiments=5)
-    main_ddpg(real_weather=[False], num_experiments=5)
-    main_ddpg_warm_start(real_weather=[False], num_experiments=5)
-    main_ddpg_col(real_weather=[False], num_experiments=5)
+    main_bc(real_weather=[True], num_experiments=10)
+    # main_ddpg(real_weather=[True], num_experiments=3)
+    # main_ddpg_warm_start(real_weather=[True], num_experiments=3)
+    # main_ddpg_col(real_weather=[True], num_experiments=2)

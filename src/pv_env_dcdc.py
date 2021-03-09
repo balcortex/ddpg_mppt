@@ -131,7 +131,7 @@ class PVEnv(PVEnvBase):
 
     def reset_day(self) -> None:
         self.day_idx = -1
-        self.reset()
+        self.done = True
 
     def step(self, action: float) -> StepResult:
         if self.done:

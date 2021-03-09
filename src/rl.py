@@ -2,6 +2,7 @@ import copy
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple, Union
 
+import os
 import gym
 import torch
 import torch.nn as nn
@@ -282,8 +283,11 @@ class BCAgent(Agent):
         actor: DDPGActor,
         demo_buffer_size: int = 50_000,
         demo_batch_size: int = 64,
+        demo_val_episodes: int = 1,
         actor_lr: float = 1e-4,
         actor_l2: float = 1e-2,
+        patience: int = 5,
+        path: Optional[str] = None,
     ):
         self.demo_train_source = demo_train_source
         self.demo_val_source = demo_val_source
@@ -292,6 +296,18 @@ class BCAgent(Agent):
         self.actor = actor
         self.demo_buffer_size = demo_buffer_size
         self.demo_batch_size = demo_batch_size
+        self.demo_val_episodes = demo_val_episodes
+        self.patience_max = patience
+        self.patience_counter = 0
+
+        if path:
+            self.val_error_log_file = os.path.join(path, "val_error.log")
+        else:
+            self.val_error_log_file = None
+
+        assert (
+            self.demo_val_source.available_episodes >= demo_val_episodes
+        ), "Not enough episodes in the validation set"
 
         self.demo_buffer = ReplayBuffer(capacity=demo_buffer_size)
         self.actor_optim = Adam(
@@ -300,8 +316,15 @@ class BCAgent(Agent):
 
         self.fill_buffers()
 
+        # self.val_set_target = []
+        # for _ in range(self.demo_val_source.available_episodes):
+        #     self.demo_val_source.play_episode()
+        #     self.val_set_target.extend(
+        #         self.demo_val_source.policy.env.history.duty_cycle
+        #     )
+
         self.val_set_target = []
-        for _ in range(self.demo_val_source.available_episodes):
+        for _ in range(self.demo_val_episodes):
             self.demo_val_source.play_episode()
             self.val_set_target.extend(
                 self.demo_val_source.policy.env.history.duty_cycle
@@ -314,18 +337,33 @@ class BCAgent(Agent):
         pass
 
     def _early_stoping(self) -> bool:
+        self.agent_val_source.policy.env.reset_day()
         val_set_agent = []
-        for _ in range(self.agent_val_source.available_episodes):
+        for _ in range(self.demo_val_episodes):
             self.agent_val_source.play_episode()
             val_set_agent.extend(self.agent_val_source.policy.env.history.duty_cycle)
         val_eror = utils.mse(self.val_set_target, val_set_agent)
 
+        if self.val_error_log_file:
+            with open(self.val_error_log_file, "a") as f:
+                f.write(f"{val_eror}\n")
+
+        # val_set_agent = []
+        # for _ in range(self.agent_val_source.available_episodes):
+        #     self.agent_val_source.play_episode()
+        #     val_set_agent.extend(self.agent_val_source.policy.env.history.duty_cycle)
+        # val_eror = utils.mse(self.val_set_target, val_set_agent)
+
         if val_eror > self._val_error:
+            self.patience_counter += 1
+        else:
+            self.patience_counter = 0
+            self._val_error = val_eror
+            self._best_actor_weights = self.actor.state_dict()
+
+        if self.patience_counter >= self.patience_max:
             self.actor.load_state_dict(self._best_actor_weights)
             return True
-
-        self._val_error = val_eror
-        self._best_actor_weights = self.actor.state_dict()
 
         return False
 
@@ -525,6 +563,7 @@ class DDPGCoLAgent(Agent):
         pretrain_steps: int = 1000,
         norm_rewards: bool = False,
         demo_percentage: float = 0.25,
+        q_filter: bool = False,
     ):
         self.demo_source = demo_source
         self.collect_source = collect_source
@@ -538,6 +577,7 @@ class DDPGCoLAgent(Agent):
         self.batch_size = batch_size
         self.norm_rewards = norm_rewards
         self.demo_percentage = demo_percentage
+        self.q_filter = q_filter
 
         self.gamma = self.collect_source.gamma
         self.n_steps = self.collect_source.n_steps
@@ -566,32 +606,7 @@ class DDPGCoLAgent(Agent):
     ) -> None:
         "Train the agents' networks"
         for _ in tqdm(range(train_steps), desc="Training", disable=not show_prog_bar):
-            batch = None
-            if pre_train or self.demo_percentage == 1.0:
-                batch = Agent._prepare_batch(
-                    self.demo_buffer,
-                    self.batch_size,
-                    norm_rewards=self.norm_rewards,
-                )
-            else:
-                if self.demo_percentage == 0:
-                    batch = Agent._prepare_batch(
-                        self.buffer,
-                        self.batch_size,
-                        norm_rewards=self.norm_rewards,
-                    )
-                else:
-                    demo_batch = Agent._prepare_batch(
-                        self.demo_buffer,
-                        int(self.demo_percentage * self.batch_size),
-                        norm_rewards=self.norm_rewards,
-                    )
-                    agent_batch = Agent._prepare_batch(
-                        self.buffer,
-                        int((1 - self.demo_percentage) * self.batch_size),
-                        norm_rewards=self.norm_rewards,
-                    )
-                    batch = self._merge_tensor_batches(demo_batch, agent_batch)
+            demo_batch, batch = self._get_training_batches(pre_train)
 
             pred_last_action = self.actor_target(batch.last_state)
             q_last = self.critic_target(batch.last_state, pred_last_action).squeeze(-1)
@@ -601,23 +616,70 @@ class DDPGCoLAgent(Agent):
             # .detach() to stop gradient propogation for q_ref
             q1_loss = F.mse_loss(q_ref.detach(), q_pred)
 
-            critic_loss = q1_loss
+            critic_loss = self.lambda_q1 * q1_loss
             self.critic_optim.zero_grad()
             critic_loss.backward()
             self.critic_optim.step()
 
-            bc_loss = F.mse_loss(
-                self.actor(batch.state).squeeze(-1), batch.action.squeeze(-1)
-            )
+            if self.q_filter:
+                bc_pred = self.actor(demo_batch.state)
+                q_pred = self.critic(demo_batch.state, bc_pred).detach()
+                q_expert = self.critic(demo_batch.state, demo_batch.action).detach()
+                mask = q_expert > q_pred
+                bc_loss = F.mse_loss(
+                    bc_pred[mask].squeeze(-1), demo_batch.action[mask].squeeze(-1)
+                )
+            else:
+                bc_loss = F.mse_loss(
+                    self.actor(demo_batch.state).squeeze(-1),
+                    demo_batch.action.squeeze(-1),
+                )
             a_loss = -self.critic(batch.state, self.actor(batch.state)).mean()
 
-            actor_loss = bc_loss + a_loss
+            actor_loss = self.lambda_bc * bc_loss + self.lambda_a * a_loss
             self.actor_optim.zero_grad()
             actor_loss.backward()
             self.actor_optim.step()
 
             self.critic_target.alpha_sync(self.tau)
             self.actor_target.alpha_sync(self.tau)
+
+    def _get_training_batches(self, pre_train: bool) -> Tuple[ExperienceTensorBatch]:
+        if pre_train:
+            demo_batch_1 = Agent._prepare_batch(
+                self.demo_buffer,
+                self.batch_size,
+                norm_rewards=self.norm_rewards,
+            )
+            demo_batch_2 = Agent._prepare_batch(
+                self.demo_buffer,
+                self.batch_size,
+                norm_rewards=self.norm_rewards,
+            )
+
+            return (demo_batch_1, demo_batch_2)
+
+        else:
+            demo_batch = Agent._prepare_batch(
+                self.demo_buffer,
+                int(self.demo_percentage * self.batch_size),
+                norm_rewards=self.norm_rewards,
+            )
+            demo_batch_temp = Agent._prepare_batch(
+                self.demo_buffer,
+                int(self.demo_percentage * self.batch_size),
+                norm_rewards=self.norm_rewards,
+            )
+            agent_batch_temp = Agent._prepare_batch(
+                self.buffer,
+                int((1 - self.demo_percentage) * self.batch_size),
+                norm_rewards=self.norm_rewards,
+            )
+            combined_batches = self._merge_tensor_batches(
+                demo_batch_temp, agent_batch_temp
+            )
+
+            return (demo_batch, combined_batches)
 
     @staticmethod
     def _merge_tensor_batches(
@@ -693,6 +755,7 @@ class DDPGWarmStartAgent(DDPGCoLAgent):
         norm_rewards: bool = False,
         pretrain_steps: int = 1000,
         demo_percentage: float = 0.25,
+        q_filter: bool = False,
     ):
 
         self.agent_test_source = agent_exp_source
@@ -732,6 +795,7 @@ class DDPGWarmStartAgent(DDPGCoLAgent):
             pretrain_steps=pretrain_steps,
             norm_rewards=norm_rewards,
             demo_percentage=demo_percentage,
+            q_filter=q_filter,
         )
 
 

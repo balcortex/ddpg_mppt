@@ -176,6 +176,18 @@ def find_test_eff(path: str, agent_name: str = "agent-test") -> float:
     return eff / days
 
 
+def find_val_eff(path: str, agent_name: str = "agent-val") -> float:
+    eff_path = os.path.join(path, "eff_results.txt")
+
+    with open(eff_path) as f:
+        for line in f.read().split():
+            if agent_name in line:
+                return round(float(line.split("_")[-1]), 2)
+
+
+    return None
+
+
 def sort_eff(
     path: str = "results.txt", save_path: str = "results_sorted.txt", average: int = 10
 ) -> None:
