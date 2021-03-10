@@ -81,8 +81,13 @@ LABELS = {
     },
 }
 
+PAIRS = {
+    "p": ["PV Maximum Power", "PV Power"],
+    "d": ["Optimum Duty Cycle", "Duty Cycle"],
+}
 
-def plot_dataframe(
+
+def plot_all_columns(
     df: pd.DataFrame,
     y: str = "p",
     zorder: Optional[Sequence[int]] = None,
@@ -125,7 +130,9 @@ def plot_dataframe(
     return f
 
 
-def dataframe_efficiency(df: pd.DataFrame, max_power_column: int = 0) -> None:
+def dataframe_comparison_efficiency(
+    df: pd.DataFrame, max_power_column: int = 0
+) -> None:
     """
     Calculate the efficiency of a DataFrame with respect to one column
 
@@ -138,3 +145,52 @@ def dataframe_efficiency(df: pd.DataFrame, max_power_column: int = 0) -> None:
             continue
         eff = utils.efficiency(df.iloc[:, max_power_column], df[col])
         print(f"{str(col)} efficiency = {eff:.2f}")
+
+
+def dataframe_efficiency(
+    df: pd.DataFrame,
+    max_power_name: str = "PV Maximum Power",
+    power_name: str = "PV Power",
+) -> float:
+    """
+    Calculate the efficiency of a DataFrame
+
+    Parameters:
+        df: the DataFrame
+        max_power_column: index of the column on which the efficiency is calculated
+    """
+    return utils.efficiency(df[max_power_name], df[power_name])
+
+
+def plot_pair_column(
+    df: pd.DataFrame,
+    y: str = "p",
+    reverse_zorder: bool = False,
+) -> matplotlib.figure.Figure:
+    """
+    Plot the results of the MPPT tracking
+
+    Parameters:
+        df: DataFrame containing the series
+        zorder: Specify the drawing priority of a line (greater = front)
+    """
+    assert y in PAIRS.keys()
+
+    zorder = list(range(2))
+    if reverse_zorder:
+        zorder = list(reversed(zorder))
+
+    f = plt.figure()
+    ax = f.add_subplot(111)
+
+    locator = mdates.AutoDateLocator(minticks=3, maxticks=10)
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+
+    ax.plot(df.index, df[PAIRS[y][0]], zorder=zorder[1], label=PAIRS[y][0])
+    ax.plot(df.index, df[PAIRS[y][1]], zorder=zorder[0], label=PAIRS[y][1])
+
+    ax.set_ylabel(LABELS[y]["ylabel"], usetex=True)
+    ax.legend()
+
+    return f

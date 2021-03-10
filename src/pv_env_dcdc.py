@@ -45,6 +45,8 @@ class History:
     dp_norm: list = field(default_factory=list)
     dv_norm: list = field(default_factory=list)
     deg: list = field(default_factory=list)
+    n_g: list = field(default_factory=list)
+    n_amb_t: list = field(default_factory=list)
 
 
 class PVEnvBase(gym.Env):
@@ -155,6 +157,8 @@ class PVEnv(PVEnvBase):
             "cell_t": self.history.cell_t[-1],
             "v": self.history.v[-1],
             "duty_cycle": self.history.duty_cycle[-1],
+            "n_g": self.history.n_g[-1],
+            "n_amb_t": self.history.n_amb_t[-1],
         }
 
         return StepResult(
@@ -236,7 +240,7 @@ class PVEnv(PVEnvBase):
 
         return eff
 
-    def _add_history(self, p, v, i, g, amb_t, cell_t, dc, date) -> None:
+    def _add_history(self, p, v, i, g, amb_t, cell_t, dc, date, next_g, next_t) -> None:
         self.history.date.append(date)
         self.history.p.append(p)
         self.history.v.append(v)
@@ -251,6 +255,8 @@ class PVEnv(PVEnvBase):
         self.history.g_norm.append(g / G_MAX)
         self.history.amb_t_norm.append(amb_t / T_MAX)
         self.history.cell_t_norm.append(cell_t / T_MAX)
+        self.history.n_g.append(next_g)
+        self.history.n_amb_t.append(next_t)
 
         if len(self.history.p) < 2:
             self.history.dp.append(0.0)
@@ -304,9 +310,20 @@ class PVEnv(PVEnvBase):
         g = int(self.weather[self.day_idx]["Irradiance"].iloc[self.step_idx])
         t = float(self.weather[self.day_idx]["Temperature"].iloc[self.step_idx])
 
+        try:
+            next_g = int(
+                self.weather[self.day_idx]["Irradiance"].iloc[self.step_idx + 1]
+            )
+            next_t = float(
+                self.weather[self.day_idx]["Temperature"].iloc[self.step_idx + 1]
+            )
+        except IndexError:
+            next_g = g
+            next_t = t
+
         p, v, i, self.dc, g, _, cell_t = self.pvarray.simulate(dc, g, int(t))
         p = max(0, p)
-        self._add_history(p, v, i, g, t, cell_t, self.dc, date)
+        self._add_history(p, v, i, g, t, cell_t, self.dc, date, next_g, next_t)
 
         # getattr(handler.request, 'GET') is the same as handler.request.GET
         return np.array([getattr(self.history, state)[-1] for state in self.states])

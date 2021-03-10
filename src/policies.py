@@ -302,18 +302,17 @@ class PerturbObservePolicyDCDC(PerturbObservePolicy):
         return "POPolicy"
 
 
-# class PerturbObservePolicyDCDC(BasePolicy):
+# class MPPPolicy(BasePolicy):
 #     """
-#     Perturb & Observe algorithm
+#     Policy that calculates the true VMPP of a pv array under G and T
 
 #     Parameters:
-#         env: gym environment used to scale the actions
-#         dc_step: magnitude of the perturbation on the duty cycle
-#         dv_index: index of the dv state (v - v_old). If the index is an int,
+#         env: pv array environment
+#         g_index: index of the irradiance state. If the index is an int,
 #             the variable must be passed on the obs parameter, if is a str, it is
 #             localized in the info parameter
-#         dp_index: index of the dp state (p - p_old)
-#         dc_index: index of the last duty cycle
+#         t_index: index of the temperature state
+#         v_index: index of the voltage state
 #         noise: sample noise from this object to perform exploration
 #         schedule: class that keep track of epsilon
 #         decrease_noise: whether to multiply the noise by epsilon
@@ -321,11 +320,10 @@ class PerturbObservePolicyDCDC(PerturbObservePolicy):
 
 #     def __init__(
 #         self,
-#         env: gym.Env,
-#         dc_step: float,
-#         dv_index: Union[int, str],
-#         dp_index: Union[int, str],
-#         dc_index: Union[int, str],
+#         env: PVEnv,
+#         g_index: Union[int, str],
+#         t_index: Union[int, str],
+#         v_index: Union[int, str],
 #         noise: Optional[Noise] = None,
 #         schedule: Optional[Schedule] = None,
 #         decrease_noise: bool = False,
@@ -336,21 +334,9 @@ class PerturbObservePolicyDCDC(PerturbObservePolicy):
 #             schedule=schedule,
 #             decrease_noise=decrease_noise,
 #         )
-#         self.dc_step = dc_step
-#         self.dv_index = dv_index
-#         self.dp_index = dp_index
-#         self.dc_index = dc_index
-
-#         self.dp_in_obs = False
-#         self.dv_in_obs = False
-#         self.dc_in_obs = False
-
-#         if isinstance(self.dp_index, int):
-#             self.dp_in_obs = True
-#         if isinstance(self.dv_index, int):
-#             self.dv_in_obs = True
-#         if isinstance(self.dc_index, int):
-#             self.dc_in_obs = True
+#         self.g_index = g_index
+#         self.t_index = t_index
+#         self.v_index = v_index
 
 #     def __call__(
 #         self,
@@ -364,140 +350,44 @@ class PerturbObservePolicyDCDC(PerturbObservePolicy):
 #             obs: observations from the environment
 #             info: additional info passed to the policy
 #         """
-#         if self.dp_in_obs:
-#             delta_p = obs[0][self.dp_index]
-#         else:
-#             delta_p = info.get(self.dp_index, 0.0)
-
-#         if self.dv_in_obs:
-#             delta_v = obs[0][self.dv_index]
-#         else:
-#             delta_v = info.get(self.dv_index, 0.0)
-
-#         if self.dc_in_obs:
-#             duty_cycle = obs[0][self.dc_index]
-#         else:
-#             duty_cycle = info.get(self.dc_index, 0.0)
-
-#         # print(f"dp={delta_p}, dv={delta_v}, duty={duty_cycle}")
-
-#         if delta_p >= 0:
-#             if delta_v >= 0:
-#                 if duty_cycle == 1.0:
-#                     action = self.dc_step
-#                 else:
-#                     action = -self.dc_step
+#         if isinstance(self.g_index, int):
+#             g = obs[0][self.g_index]
+#         elif isinstance(self.g_index, str):
+#             if info == {}:
+#                 g = self.env.history.g[-1]
 #             else:
-#                 if duty_cycle == 0.0:
-#                     action = -self.dc_step
-#                 else:
-#                     action = self.dc_step
+#                 g = info[self.g_index]
 #         else:
-#             if delta_v >= 0:
-#                 if duty_cycle == 1.0:
-#                     action = self.dc_step
-#                 else:
-#                     action = -self.dc_step
+#             raise ValueError(f"g_index must be str or int")
+
+#         if isinstance(self.t_index, int):
+#             t = obs[0][self.t_index]
+#         elif isinstance(self.t_index, str):
+#             if info == {}:
+#                 t = self.env.history.t[-1]
 #             else:
-#                 if duty_cycle == 0.0:
-#                     action = -self.dc_step
-#                 else:
-#                     action = self.dc_step
+#                 t = info[self.t_index]
+#         else:
+#             raise ValueError(f"t_index must be str or int")
 
-#         print(f"dp={delta_p}, dv={delta_v}, duty={duty_cycle}, action={action}")
+#         if isinstance(self.v_index, int):
+#             v = obs[0][self.v_index]
+#         elif isinstance(self.v_index, str):
+#             if info == {}:
+#                 v = self.env.history.v[-1]
+#             else:
+#                 v = info[self.v_index]
+#         else:
+#             raise ValueError(f"v_index must be str or int")
 
-#         action = np.array([action])
+#         _, v_mpp, _ = self.env.pvarray.get_true_mpp(irradiance=[g], cell_temp=[t])
+
+#         action = np.array([v_mpp - v])
 #         action = self._process_actions(action)
-
 #         return action
 
 
-# class PerturbObservePolicyDCDC2(BasePolicy):
-#     """
-#     Perturb & Observe algorithm
-
-#     Parameters:
-#         env: gym environment used to scale the actions
-#         dc_step: magnitude of the perturbation on the duty cycle
-#         dp_index: index of the dp state (p - p_old)
-#         ddc_index: index of the change of duty cycle
-#         noise: sample noise from this object to perform exploration
-#         schedule: class that keep track of epsilon
-#         decrease_noise: whether to multiply the noise by epsilon
-#     """
-
-#     def __init__(
-#         self,
-#         env: gym.Env,
-#         dc_step: float,
-#         dp_index: Union[int, str],
-#         ddc_index: Union[int, str],
-#         noise: Optional[Noise] = None,
-#         schedule: Optional[Schedule] = None,
-#         decrease_noise: bool = False,
-#     ):
-#         super().__init__(
-#             env=env,
-#             noise=noise,
-#             schedule=schedule,
-#             decrease_noise=decrease_noise,
-#         )
-#         self.dc_step = dc_step
-#         self.dp_index = dp_index
-#         self.ddc_index = ddc_index
-
-#         self.dp_in_obs = False
-#         self.ddc_in_obs = False
-
-#         if isinstance(self.dp_index, int):
-#             self.dp_in_obs = True
-#         if isinstance(self.ddc_index, int):
-#             self.ddc_in_obs = True
-
-#     def __call__(
-#         self,
-#         obs: np.ndarray,
-#         info: Optional[Dict[Any, Any]] = None,
-#     ) -> np.ndarray:
-#         """
-#         Get an action according to the observation
-
-#         Parameters:
-#             obs: observations from the environment
-#             info: additional info passed to the policy
-#         """
-#         if self.dp_in_obs:
-#             delta_p = obs[0][self.dp_index]
-#         else:
-#             delta_p = info.get(self.dp_index, 0.0)
-
-#         if self.ddc_in_obs:
-#             dduty_cycle = obs[0][self.ddc_index]
-#         else:
-#             dduty_cycle = info.get(self.ddc_index, 0.0)
-
-#         # print(f"dp={delta_p}, dv={delta_v}, duty={duty_cycle}")
-
-#         if delta_p >= 0:
-#             if dduty_cycle >= 0:
-#                 action = self.dc_step
-#             else:
-#                 action = -self.dc_step
-#         else:
-#             if dduty_cycle >= 0:
-#                 action = -self.dc_step
-#             else:
-#                 action = self.dc_step
-
-#         # print(f"dp={delta_p}, dv={delta_v}, duty={duty_cycle}, action={action}")
-
-#         action = np.array([action])
-#         action = self._process_actions(action)
-
-#         return action
-
-
-class MPPPolicy(BasePolicy):
+class MPPPolicyDCDC(BasePolicy):
     """
     Policy that calculates the true VMPP of a pv array under G and T
 
@@ -518,7 +408,7 @@ class MPPPolicy(BasePolicy):
         env: PVEnv,
         g_index: Union[int, str],
         t_index: Union[int, str],
-        v_index: Union[int, str],
+        dc_index: Union[int, str],
         noise: Optional[Noise] = None,
         schedule: Optional[Schedule] = None,
         decrease_noise: bool = False,
@@ -531,7 +421,7 @@ class MPPPolicy(BasePolicy):
         )
         self.g_index = g_index
         self.t_index = t_index
-        self.v_index = v_index
+        self.dc_index = dc_index
 
     def __call__(
         self,
@@ -549,7 +439,7 @@ class MPPPolicy(BasePolicy):
             g = obs[0][self.g_index]
         elif isinstance(self.g_index, str):
             if info == {}:
-                g = self.env.history.g[-1]
+                g = self.env.history.n_g[-1]
             else:
                 g = info[self.g_index]
         else:
@@ -559,24 +449,81 @@ class MPPPolicy(BasePolicy):
             t = obs[0][self.t_index]
         elif isinstance(self.t_index, str):
             if info == {}:
-                t = self.env.history.t[-1]
+                t = self.env.history.n_amb_t[-1]
             else:
                 t = info[self.t_index]
         else:
             raise ValueError(f"t_index must be str or int")
 
-        if isinstance(self.v_index, int):
-            v = obs[0][self.v_index]
-        elif isinstance(self.v_index, str):
+        if isinstance(self.dc_index, int):
+            dc = obs[0][self.dc_index]
+        elif isinstance(self.dc_index, str):
             if info == {}:
-                v = self.env.history.v[-1]
+                dc = self.env.history.duty_cycle[-1]
             else:
-                v = info[self.v_index]
+                dc = info[self.dc_index]
         else:
-            raise ValueError(f"v_index must be str or int")
+            raise ValueError(f"dc_index must be str or int")
 
-        _, v_mpp, _ = self.env.pvarray.get_true_mpp(irradiance=[g], cell_temp=[t])
+        result = self.env.pvarray.get_true_mpp(irradiance=[g], ambient_temp=[t])
+        dc_optim = result.duty_cycle
 
-        action = np.array([v_mpp - v])
+        action = np.array([dc_optim - dc])
         action = self._process_actions(action)
         return action
+
+
+# class MPPPolicyDCDC(BasePolicy):
+#     """
+#     Policy that calculates the true VMPP of a pv array under G and T
+
+#     Parameters:
+#         env: pv array environment
+#         g_index: index of the irradiance state. If the index is an int,
+#             the variable must be passed on the obs parameter, if is a str, it is
+#             localized in the info parameter
+#         t_index: index of the temperature state
+#         v_index: index of the voltage state
+#         noise: sample noise from this object to perform exploration
+#         schedule: class that keep track of epsilon
+#         decrease_noise: whether to multiply the noise by epsilon
+#     """
+
+#     def __init__(
+#         self,
+#         env: PVEnv,
+#         # g_index: Union[int, str],
+#         # t_index: Union[int, str],
+#         # dc_index: Union[int, str],
+#         noise: Optional[Noise] = None,
+#         schedule: Optional[Schedule] = None,
+#         decrease_noise: bool = False,
+#     ):
+#         super().__init__(
+#             env=env,
+#             noise=noise,
+#             schedule=schedule,
+#             decrease_noise=decrease_noise,
+#         )
+#         # self.g_index = g_index
+#         # self.t_index = t_index
+#         # self.dc_index = dc_index
+
+#     def __call__(
+#         self,
+#         obs: np.ndarray,
+#         info: Optional[Dict[Any, Any]] = None,
+#     ) -> np.ndarray:
+#         """
+#         Get an action according to the observation
+
+#         Parameters:
+#             obs: observations from the environment
+#             info: additional info passed to the policy
+#         """
+#         d = self.env.history.duty_cycle[-1]
+#         d_opt_next = self.env.history.d_opt_nxt[-1]
+
+#         action = np.array([d_opt_next - d])
+#         action = self._process_actions(action)
+#         return action
