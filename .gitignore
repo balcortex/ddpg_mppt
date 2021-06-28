@@ -1,6 +1,13 @@
 .vscode/
 dig/
 src/matlab_model.slx.autosave
+data/dataframes
+data/bc_real.zip
+data/*.json
+slprj
+*.autosave
+*.slxc
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
