@@ -147,7 +147,8 @@ def plot_curves(
 
     ax.text(
         *(v1[int(points * 0.95)] + 0.1, r1_curve[int(points * 0.95)] + 0.2),
-        f"$\mathrm{{Load_1}}$ = {r1} $\Omega$",
+        # f"$\mathrm{{Load_1}}$ = {r1} $\Omega$",
+        f"$\mathrm{{Carga_1}}$ = {r1} $\Omega$",
         fontsize=10,
         rotation=np.arctan2(r1_curve[0], v1[0]) * 180 - 5,
         rotation_mode="anchor",
@@ -156,7 +157,8 @@ def plot_curves(
 
     ax.text(
         *(v1[int(points * 0.85)] + 0.1, r2_curve[int(points * 0.85)] + 0.1),
-        f"$\mathrm{{Load_2}}$ = {r2} $\Omega$",
+        # f"$\mathrm{{Load_2}}$ = {r2} $\Omega$",
+        f"$\mathrm{{Carga_2}}$ = {r2} $\Omega$",
         fontsize=10,
         rotation=np.arctan2(r2_curve[0], v1[0]) * 180 - 1,
         rotation_mode="anchor",
@@ -195,13 +197,15 @@ def plot_curves(
     ax1.plot(
         v1,
         p1,
-        label=f"Curve 1 - {g1} $\mathrm{{W/m^2}}$ @ {t1} $\mathrm{{^o}}$C",
+        # label=f"Curve 1 - {g1} $\mathrm{{W/m^2}}$ @ {t1} $\mathrm{{^o}}$C",
+        label=f"Curva 1 - {g1} $\mathrm{{W/m^2}}$ @ {t1} $\mathrm{{^o}}$C",
         color=COLOR_LIST[0],
     )
     ax1.plot(
         v2,
         p2,
-        label=f"Curve 2 - {g2} $\mathrm{{W/m^2}}$ @ {t2} $\mathrm{{^o}}$C",
+        # label=f"Curve 2 - {g2} $\mathrm{{W/m^2}}$ @ {t2} $\mathrm{{^o}}$C",
+        label=f"Curva 2 - {g2} $\mathrm{{W/m^2}}$ @ {t2} $\mathrm{{^o}}$C",
         color=COLOR_LIST[1],
     )
 
@@ -240,8 +244,10 @@ def plot_curves(
     )
 
     ax1.legend(loc="upper left")
-    ax1.set_xlabel("Voltage (V)")
-    ax1.set_ylabel("Power (W)")
+    # ax1.set_xlabel("Voltage (V)")
+    # ax1.set_ylabel("Power (W)")
+    ax1.set_xlabel("Voltaje (V)")
+    ax1.set_ylabel("Potencia (W)")
     # plt.tight_layout()
 
     pvarray.save()

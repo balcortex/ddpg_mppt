@@ -286,7 +286,7 @@ class BCAgent(Agent):
         demo_val_episodes: int = 1,
         actor_lr: float = 1e-4,
         actor_l2: float = 1e-2,
-        patience: int = 5,
+        patience: int = 20,
         path: Optional[str] = None,
     ):
         self.demo_train_source = demo_train_source

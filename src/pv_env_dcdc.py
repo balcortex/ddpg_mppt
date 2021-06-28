@@ -44,8 +44,11 @@ class History:
     i_norm: list = field(default_factory=list)
     dp_norm: list = field(default_factory=list)
     dv_norm: list = field(default_factory=list)
+    dg_norm: list = field(default_factory=list)
+    dt_norm: list = field(default_factory=list)
     deg: list = field(default_factory=list)
     n_g: list = field(default_factory=list)
+    n_g_norm: list = field(default_factory=list)
     n_amb_t: list = field(default_factory=list)
 
 
@@ -256,6 +259,7 @@ class PVEnv(PVEnvBase):
         self.history.amb_t_norm.append(amb_t / T_MAX)
         self.history.cell_t_norm.append(cell_t / T_MAX)
         self.history.n_g.append(next_g)
+        self.history.n_g_norm.append(next_g / G_MAX)
         self.history.n_amb_t.append(next_t)
 
         if len(self.history.p) < 2:
@@ -265,6 +269,8 @@ class PVEnv(PVEnvBase):
             self.history.deg.append(0.0)
             self.history.dp_norm.append(0.0)
             self.history.dv_norm.append(0.0)
+            self.history.dg_norm.append(0.0)
+            self.history.dt_norm.append(0.0)
             self.history.dduty_cycle.append(0.0)
         else:
             self.history.dp.append(self.history.p[-1] - self.history.p[-2])
@@ -272,6 +278,12 @@ class PVEnv(PVEnvBase):
             self.history.di.append(self.history.i[-1] - self.history.i[-2])
             self.history.dp_norm.append(
                 self.history.p_norm[-1] - self.history.p_norm[-2]
+            )
+            self.history.dg_norm.append(
+                self.history.g_norm[-1] - self.history.g_norm[-2]
+            )
+            self.history.dt_norm.append(
+                self.history.amb_t_norm[-1] - self.history.amb_t_norm[-2]
             )
             self.history.dv_norm.append(
                 self.history.v_norm[-1] - self.history.v_norm[-2]
